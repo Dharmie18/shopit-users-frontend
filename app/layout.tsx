@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Shop It - Quality Goods. Direct Naira Pricing.',
+  title: 'ShopIt - Quality Goods. Direct Naira Pricing.',
   description: 'Nigeria’s direct marketplace for food staples, groceries, stationery, electronics, and essentials.',
   icons: {
     icon: '/icon.svg',
