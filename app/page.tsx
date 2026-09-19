@@ -31,6 +31,7 @@ import {
   Building2,
   CheckCircle2,
   Quote,
+  Loader2,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
@@ -53,9 +54,10 @@ export default function Page() {
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState('');
 
-  // Async States
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  // Async Isolated States
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState('');
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
 
   // Auth & Account State
   const [user, setUser] = useState<Partial<User> | null>(null);
@@ -88,24 +90,58 @@ export default function Page() {
     }
   }, []);
 
-  async function loadInitialData() {
-    setLoading(true);
-    setError('');
+  async function loadProducts() {
+    setProductsLoading(true);
+    setProductsError('');
+    const startTime = Date.now();
     try {
-      const [prodData, catData, statsData] = await Promise.all([
-        apiRequest<Product[]>('/api/products/products.php'),
-        apiRequest<Category[]>('/api/categories/categories.php'),
-        apiRequest<PlatformStats>('/api/stats/overview.php').catch(() => null),
-        sleep(650),
-      ]);
+      const prodData = await apiRequest<Product[]>('/api/products/products.php');
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 800) {
+        await sleep(800 - elapsed);
+      }
       setProducts(Array.isArray(prodData) ? prodData : []);
-      setCategories(Array.isArray(catData) ? catData : []);
-      if (statsData) setStats(statsData);
     } catch (err: any) {
-      setError(err.message || 'Failed to load catalog data');
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 800) {
+        await sleep(800 - elapsed);
+      }
+      setProductsError(err.message || 'Unable to connect to product catalog.');
     } finally {
-      setLoading(false);
+      setProductsLoading(false);
     }
+  }
+
+  async function loadCategories() {
+    setCategoriesLoading(true);
+    const startTime = Date.now();
+    try {
+      const catData = await apiRequest<Category[]>('/api/categories/categories.php');
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 600) {
+        await sleep(600 - elapsed);
+      }
+      setCategories(Array.isArray(catData) ? catData : []);
+    } catch {
+      // Keep default/empty categories gracefully
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }
+
+  async function loadStats() {
+    try {
+      const statsData = await apiRequest<PlatformStats>('/api/stats/overview.php');
+      if (statsData) setStats(statsData);
+    } catch {
+      // Keep default stats gracefully
+    }
+  }
+
+  function loadInitialData() {
+    loadProducts();
+    loadCategories();
+    loadStats();
   }
 
   async function loadUserProfile() {
@@ -120,11 +156,13 @@ export default function Page() {
 
   async function loadUserOrders() {
     setOrdersLoading(true);
+    const startTime = Date.now();
     try {
-      const [orders] = await Promise.all([
-        apiRequest<Order[]>('/api/users/orders.php', 'GET', undefined, true),
-        sleep(600),
-      ]);
+      const orders = await apiRequest<Order[]>('/api/users/orders.php', 'GET', undefined, true);
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 600) {
+        await sleep(600 - elapsed);
+      }
       setUserOrders(Array.isArray(orders) ? orders : []);
     } catch {
       setUserOrders([]);
@@ -444,126 +482,129 @@ export default function Page() {
 
         {/* Main Views Container */}
         <main>
-          {error ? (
-            <div className="mx-auto max-w-xl my-12 px-4 py-8 border border-[#9a4e2c]/30 bg-[#fee2e2] text-[#991b1b] text-center mx-4 sm:mx-auto">
-              <AlertCircle className="size-8 mx-auto mb-3" />
-              <h3 className="font-black uppercase tracking-wider text-base">Unable to Load Products</h3>
-              <p className="mt-2 text-xs">{error}</p>
-              <button
-                onClick={loadInitialData}
-                className="mt-6 inline-flex items-center gap-2 bg-[#14212b] text-[#e0ee56] px-4 py-2.5 text-xs font-black uppercase tracking-wider cursor-pointer"
-              >
-                <RefreshCw className="size-3.5" /> Refresh Page
-              </button>
-            </div>
-          ) : (
-            <>
-              {view === 'home' && (
-                <HomeView
-                  products={products}
-                  categories={categories}
-                  loading={loading}
-                  onBrowseCategory={(catId) => {
-                    setSelectedCategory(catId);
-                    setView('shop');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  onBrowseAll={() => {
-                    setSelectedCategory(null);
-                    setView('shop');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  onProduct={openProduct}
-                  onAddToCart={addToCart}
-                  newsletterEmail={newsletterEmail}
-                  setNewsletterEmail={setNewsletterEmail}
-                  onNewsletterSubmit={(e) => handleNewsletterSubscribe(e, newsletterEmail)}
-                  newsletterLoading={newsletterLoading}
-                  newsletterMsg={newsletterMsg}
-                  stats={stats}
-                />
-              )}
+          {view === 'home' && (
+            <HomeView
+              products={products}
+              categories={categories}
+              productsLoading={productsLoading}
+              productsError={productsError}
+              categoriesLoading={categoriesLoading}
+              onRetryProducts={loadProducts}
+              onBrowseCategory={(catId) => {
+                setSelectedCategory(catId);
+                setView('shop');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onBrowseAll={() => {
+                setSelectedCategory(null);
+                setView('shop');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onProduct={openProduct}
+              onAddToCart={addToCart}
+              newsletterEmail={newsletterEmail}
+              setNewsletterEmail={setNewsletterEmail}
+              onNewsletterSubmit={(e) => handleNewsletterSubscribe(e, newsletterEmail)}
+              newsletterLoading={newsletterLoading}
+              newsletterMsg={newsletterMsg}
+              stats={stats}
+            />
+          )}
 
-              {view === 'shop' && (
-                <ShopView
-                  products={filteredProducts}
-                  categories={categories}
-                  loading={loading}
-                  selectedCategory={selectedCategory}
-                  onSelectCategory={setSelectedCategory}
-                  search={search}
-                  onSearchChange={setSearch}
-                  onProduct={openProduct}
-                  onAddToCart={addToCart}
-                />
-              )}
+          {view === 'shop' && (
+            <ShopView
+              products={filteredProducts}
+              categories={categories}
+              productsLoading={productsLoading}
+              productsError={productsError}
+              onRetryProducts={loadProducts}
+              selectedCategory={selectedCategory}
+              onSelectCategory={setSelectedCategory}
+              search={search}
+              onSearchChange={setSearch}
+              onProduct={openProduct}
+              onAddToCart={addToCart}
+            />
+          )}
 
-              {view === 'product' && selectedProduct && (
-                <ProductDetailView
-                  product={selectedProduct}
-                  onBack={() => setView('shop')}
-                  onAddToCart={addToCart}
-                />
-              )}
+          {view === 'product' && (
+            selectedProduct ? (
+              <ProductDetailView
+                product={selectedProduct}
+                onBack={() => setView('shop')}
+                onAddToCart={addToCart}
+              />
+            ) : (
+              <div className="mx-auto max-w-xl my-16 px-4 py-8 border border-[#14212b]/15 bg-[#f5f5f1] text-center">
+                <Package className="size-10 mx-auto mb-2 text-[#14212b]/40" />
+                <h3 className="font-black text-base uppercase">Product Not Selected</h3>
+                <p className="mt-1 text-xs text-[#14212b]/60">Please choose a product from the catalog.</p>
+                <button
+                  onClick={() => setView('shop')}
+                  className="mt-5 bg-[#14212b] text-[#e0ee56] px-5 py-2.5 text-xs font-black uppercase tracking-wider cursor-pointer hover:bg-[#1f3342]"
+                >
+                  Return to Catalog
+                </button>
+              </div>
+            )
+          )}
 
-              {view === 'checkout' && (
-                <CheckoutView
-                  cart={cart}
-                  subtotal={subtotal}
-                  tax={tax}
-                  form={checkoutForm}
-                  setForm={setCheckoutForm}
-                  onSubmit={handleCheckout}
-                  loading={checkoutLoading}
-                  error={checkoutError}
-                  onBack={() => setView('shop')}
-                />
-              )}
+          {view === 'checkout' && (
+            <CheckoutView
+              cart={cart}
+              subtotal={subtotal}
+              tax={tax}
+              form={checkoutForm}
+              setForm={setCheckoutForm}
+              onSubmit={handleCheckout}
+              loading={checkoutLoading}
+              error={checkoutError}
+              onBack={() => setView('shop')}
+            />
+          )}
 
-              {view === 'confirmation' && lastOrderResult && (
-                <OrderConfirmationView
-                  orderResult={lastOrderResult}
-                  onContinueShopping={() => { setView('shop'); setSelectedCategory(null); }}
-                  onViewAccount={() => setView('account')}
-                />
-              )}
+          {view === 'confirmation' && lastOrderResult && (
+            <OrderConfirmationView
+              orderResult={lastOrderResult}
+              onContinueShopping={() => { setView('shop'); setSelectedCategory(null); }}
+              onViewAccount={() => setView('account')}
+            />
+          )}
 
-              {view === 'account' && (
-                <AccountView
-                  user={user}
-                  mode={accountMode}
-                  setMode={(m) => {
-                    setAccountMode(m);
-                    setAuthError('');
-                    setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
-                  }}
-                  form={authForm}
-                  setForm={setAuthForm}
-                  onSubmit={handleAuthSubmit}
-                  onLogout={handleLogout}
-                  loading={authLoading}
-                  error={authError}
-                  orders={userOrders}
-                  ordersLoading={ordersLoading}
-                  onRefreshOrders={loadUserOrders}
-                />
-              )}
+          {view === 'account' && (
+            <AccountView
+              user={user}
+              mode={accountMode}
+              setMode={(m) => {
+                setAccountMode(m);
+                setAuthError('');
+                setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+              }}
+              form={authForm}
+              setForm={setAuthForm}
+              onSubmit={handleAuthSubmit}
+              onLogout={handleLogout}
+              loading={authLoading}
+              error={authError}
+              orders={userOrders}
+              ordersLoading={ordersLoading}
+              onRefreshOrders={loadUserOrders}
+            />
+          )}
 
-              {view === 'about' && (
-                <AboutView
-                  stats={stats}
-                  onBrowseProducts={() => {
-                    setView('shop');
-                    setSelectedCategory(null);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  onBrowseCategories={() => {
-                    setView('home');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                />
-              )}
-            </>
+          {view === 'about' && (
+            <AboutView
+              stats={stats}
+              onBrowseProducts={() => {
+                setView('shop');
+                setSelectedCategory(null);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onBrowseCategories={() => {
+                setView('home');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
           )}
         </main>
       </div>
@@ -817,7 +858,14 @@ function FooterNewsletterForm({
         disabled={loading}
         className="bg-[#e0ee56] text-[#14212b] px-4 py-2 text-xs font-black uppercase tracking-wider hover:bg-[#d4e24a] cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
       >
-        {loading ? 'Joining...' : 'Subscribe'}
+        {loading ? (
+          <>
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Joining...</span>
+          </>
+        ) : (
+          'Subscribe'
+        )}
       </button>
     </form>
   );
@@ -826,7 +874,10 @@ function FooterNewsletterForm({
 function HomeView({
   products,
   categories,
-  loading,
+  productsLoading,
+  productsError,
+  categoriesLoading,
+  onRetryProducts,
   onBrowseCategory,
   onBrowseAll,
   onProduct,
@@ -840,7 +891,10 @@ function HomeView({
 }: {
   products: Product[];
   categories: Category[];
-  loading: boolean;
+  productsLoading: boolean;
+  productsError: string;
+  categoriesLoading: boolean;
+  onRetryProducts: () => void;
   onBrowseCategory: (catId: number) => void;
   onBrowseAll: () => void;
   onProduct: (p: Product) => void;
@@ -908,7 +962,7 @@ function HomeView({
             <div className="bg-[#1b2b38] border border-white/15 p-6 rounded-xs space-y-4">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-[#e0ee56]">Available Categories</p>
               <div className="text-4xl sm:text-6xl font-black tracking-tight text-white">
-                {loading ? <Skeleton className="h-14 w-32 bg-white/20" /> : categories.length + ' Categories'}
+                {categoriesLoading ? <Skeleton className="h-14 w-32 bg-white/20" /> : categories.length + ' Categories'}
               </div>
               <p className="text-xs leading-relaxed text-white/70">
                 All catalog items reflect live inventory in our warehouses ready for immediate dispatch across Nigeria.
@@ -988,12 +1042,29 @@ function HomeView({
           </div>
 
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {loading ? (
+            {productsLoading ? (
               <>
                 {[1, 2, 3, 4].map((i) => (
                   <ProductCardSkeleton key={i} />
                 ))}
               </>
+            ) : productsError ? (
+              <div className="col-span-full border border-[#9a4e2c]/30 bg-[#fee2e2]/50 p-8 text-center text-[#991b1b]">
+                <AlertCircle className="size-8 mx-auto mb-2 text-[#9a4e2c]" />
+                <h4 className="font-black uppercase tracking-wider text-sm">Product Catalog Temporarily Unavailable</h4>
+                <p className="text-xs text-[#14212b]/70 mt-1 max-w-md mx-auto">{productsError}</p>
+                <button
+                  onClick={onRetryProducts}
+                  className="mt-4 inline-flex items-center gap-2 bg-[#14212b] text-[#e0ee56] px-4 py-2 text-xs font-black uppercase tracking-wider hover:bg-[#1f3342] cursor-pointer"
+                >
+                  <RefreshCw className="size-3.5" /> Retry Loading Products
+                </button>
+              </div>
+            ) : products.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-sm text-[#14212b]/60">
+                <Package className="size-10 mx-auto mb-2 text-[#14212b]/30" />
+                No products available at the moment.
+              </div>
             ) : (
               products.slice(0, 8).map((p) => (
                 <ProductCard key={p.product_id} product={p} onProduct={onProduct} />
@@ -1140,9 +1211,16 @@ function HomeView({
               />
               <button
                 disabled={newsletterLoading}
-                className="bg-[#e0ee56] text-[#14212b] px-6 py-3.5 text-xs font-black uppercase tracking-wider hover:bg-[#d4e24a] cursor-pointer disabled:opacity-50 transition-colors whitespace-nowrap"
+                className="bg-[#e0ee56] text-[#14212b] px-6 py-3.5 text-xs font-black uppercase tracking-wider hover:bg-[#d4e24a] cursor-pointer disabled:opacity-50 transition-colors whitespace-nowrap flex items-center justify-center gap-2"
               >
-                {newsletterLoading ? 'Subscribing...' : 'Subscribe'}
+                {newsletterLoading ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>Subscribing...</span>
+                  </>
+                ) : (
+                  'Subscribe'
+                )}
               </button>
             </form>
             {newsletterMsg && (
@@ -1229,7 +1307,9 @@ function ProductCard({ product, onProduct }: { product: Product; onProduct: (p: 
 function ShopView({
   products,
   categories,
-  loading,
+  productsLoading,
+  productsError,
+  onRetryProducts,
   selectedCategory,
   onSelectCategory,
   search,
@@ -1239,7 +1319,9 @@ function ShopView({
 }: {
   products: Product[];
   categories: Category[];
-  loading: boolean;
+  productsLoading: boolean;
+  productsError: string;
+  onRetryProducts: () => void;
   selectedCategory: number | null;
   onSelectCategory: (catId: number | null) => void;
   search: string;
@@ -1309,12 +1391,24 @@ function ShopView({
 
       {/* Grid */}
       <div className="mt-8 grid gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {loading ? (
+        {productsLoading ? (
           <>
             {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
               <ProductCardSkeleton key={i} />
             ))}
           </>
+        ) : productsError ? (
+          <div className="col-span-full border border-[#9a4e2c]/30 bg-[#fee2e2]/50 p-12 text-center text-[#991b1b]">
+            <AlertCircle className="size-10 mx-auto mb-3 text-[#9a4e2c]" />
+            <h3 className="font-black uppercase tracking-wider text-base">Unable to Load Products</h3>
+            <p className="text-xs text-[#14212b]/70 mt-1 max-w-md mx-auto">{productsError}</p>
+            <button
+              onClick={onRetryProducts}
+              className="mt-5 inline-flex items-center gap-2 bg-[#14212b] text-[#e0ee56] px-5 py-2.5 text-xs font-black uppercase tracking-wider hover:bg-[#1f3342] cursor-pointer"
+            >
+              <RefreshCw className="size-4" /> Retry Catalog
+            </button>
+          </div>
         ) : products.length === 0 ? (
           <div className="col-span-full py-20 text-center text-sm text-[#14212b]/60">
             <Package className="size-10 mx-auto mb-2 text-[#14212b]/30" />
@@ -1535,9 +1629,16 @@ function CheckoutView({
 
             <button
               disabled={loading || cart.length === 0}
-              className="bg-[#14212b] text-[#e0ee56] py-4 text-xs font-black uppercase tracking-[.16em] disabled:opacity-40 cursor-pointer hover:bg-[#14212b]/90 shadow-xl"
+              className="bg-[#14212b] text-[#e0ee56] py-4 text-xs font-black uppercase tracking-[.16em] disabled:opacity-40 cursor-pointer hover:bg-[#14212b]/90 shadow-xl flex items-center justify-center gap-2"
             >
-              {loading ? 'Processing Order...' : 'Place Order (₦)'}
+              {loading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Processing Order...</span>
+                </>
+              ) : (
+                'Place Order (₦)'
+              )}
             </button>
           </form>
         </div>
@@ -1830,7 +1931,16 @@ function AccountView({
             disabled={loading}
             className="mt-4 flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-[.15em] text-[#e0ee56] disabled:opacity-50 cursor-pointer hover:bg-[#14212b]/90 transition-all shadow-md"
           >
-            {loading ? 'Submitting...' : mode === 'register' ? 'Create Account' : 'Sign In'}
+            {loading ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
+              </>
+            ) : mode === 'register' ? (
+              'Create Account'
+            ) : (
+              'Sign In'
+            )}
           </button>
         </form>
       </div>
