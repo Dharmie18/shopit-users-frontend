@@ -1,0 +1,5 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="180" height="180" rx="40" fill="#14212b"/>
+  <rect x="10" y="10" width="160" height="160" rx="30" stroke="#e0ee56" stroke-width="6" stroke-opacity="0.3"/>
+  <text x="90" y="125" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="105" font-weight="900" fill="#e0ee56" text-anchor="middle">S</text>
+</svg>
