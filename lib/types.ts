@@ -4,10 +4,12 @@ export type User = {
   last_name: string;
   email: string;
   role?: string;
+  is_verified?: boolean | number;
   referral_code?: string;
   referred_by_id?: number | null;
   created_at?: string;
 };
+
 
 export type Category = {
   category_id: number;

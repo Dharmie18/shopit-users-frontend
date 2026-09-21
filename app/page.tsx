@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowRight,
   ArrowDown,
@@ -45,6 +45,8 @@ import {
   Timer,
   Eye,
   EyeOff,
+  KeyRound,
+  ArrowLeft,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
@@ -90,6 +92,7 @@ export default function Page() {
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [cartLoaded, setCartLoaded] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -103,10 +106,11 @@ export default function Page() {
 
   // Auth & Account State
   const [user, setUser] = useState<Partial<User> | null>(null);
-  const [accountMode, setAccountMode] = useState<'login' | 'register'>('login');
+  const [accountMode, setAccountMode] = useState<'login' | 'register' | 'verify_notice'>('login');
   const [authForm, setAuthForm] = useState({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+
 
   // Referral & Coupon State
   const [referralData, setReferralData] = useState<ReferralData | null>(null);
@@ -134,8 +138,24 @@ export default function Page() {
   useEffect(() => {
     loadInitialData();
 
-    // Check for referral code in query params ?ref=CODE
+    // 1. Initialize local cart from localStorage
+    let savedLocalCart: CartLine[] = [];
     if (typeof window !== 'undefined') {
+      try {
+        const storedCart = localStorage.getItem('shopit_cart');
+        if (storedCart) {
+          const parsed = JSON.parse(storedCart);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            savedLocalCart = parsed;
+            setCart(parsed);
+          }
+        }
+      } catch {
+        // ignore storage error
+      }
+      setCartLoaded(true);
+
+      // Check for referral code or magic email verification token in query params
       const params = new URLSearchParams(window.location.search);
       const ref = params.get('ref');
       if (ref) {
@@ -157,6 +177,46 @@ export default function Page() {
           // ignore
         }
       }
+
+      // Check for magic email verification link ?verify_token=...
+      const verifyToken = params.get('verify_token') || params.get('token');
+      if (verifyToken) {
+        apiRequest('/api/users/verify-email.php', 'POST', { token: verifyToken })
+          .then((res: any) => {
+            if (res.token) {
+              saveAuth(res.token, {
+                user_id: res.user_id,
+                first_name: res.first_name,
+                last_name: res.last_name,
+                email: res.email,
+                role: res.role,
+                is_verified: true,
+              });
+              setUser({
+                user_id: res.user_id,
+                first_name: res.first_name,
+                last_name: res.last_name,
+                email: res.email,
+                role: res.role,
+                is_verified: true,
+              });
+              notify('🎉 Email verified successfully! Welcome to ShopIt.');
+              setView('account');
+              loadUserProfile();
+              loadUserOrders();
+              loadReferralData();
+              loadUserCart(savedLocalCart);
+            }
+          })
+          .catch((err: any) => {
+            notify(err.message || 'Verification link is invalid or already activated.');
+          })
+          .finally(() => {
+            // Remove token from browser address bar
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+          });
+      }
     }
 
     if (isAuthenticated()) {
@@ -164,8 +224,36 @@ export default function Page() {
       loadUserProfile();
       loadUserOrders();
       loadReferralData();
+      loadUserCart(savedLocalCart);
     }
   }, []);
+
+  // Sync Cart to LocalStorage and Backend Database (Debounced)
+  useEffect(() => {
+    if (!cartLoaded) return;
+
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem('shopit_cart', JSON.stringify(cart));
+      } else {
+        localStorage.removeItem('shopit_cart');
+      }
+    } catch {
+      // ignore
+    }
+
+    if (isAuthenticated()) {
+      const timer = setTimeout(() => {
+        const itemsToSend = cart.map((line) => ({
+          product_id: line.product_id,
+          quantity: line.quantity,
+        }));
+        apiRequest('/api/cart/cart.php', 'POST', { items: itemsToSend, mode: 'replace' }, true).catch(() => {});
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [cart, cartLoaded]);
+
 
   useEffect(() => {
     function updateScrollControl() {
@@ -278,6 +366,42 @@ export default function Page() {
     }
   }
 
+  async function loadUserCart(guestCartToMerge?: CartLine[]) {
+    if (!isAuthenticated()) return;
+    try {
+      if (guestCartToMerge && guestCartToMerge.length > 0) {
+        const itemsToSend = guestCartToMerge.map((l) => ({
+          product_id: l.product_id,
+          quantity: l.quantity,
+        }));
+        const res = await apiRequest<{ message: string; cart: CartLine[] }>(
+          '/api/cart/cart.php',
+          'POST',
+          { items: itemsToSend, mode: 'merge' },
+          true
+        );
+        if (res && Array.isArray(res.cart)) {
+          setCart(res.cart);
+          try {
+            localStorage.setItem('shopit_cart', JSON.stringify(res.cart));
+          } catch {}
+        }
+      } else {
+        const res = await apiRequest<{ cart: CartLine[] }>('/api/cart/cart.php', 'GET', undefined, true);
+        if (res && Array.isArray(res.cart)) {
+          setCart(res.cart);
+          try {
+            if (res.cart.length > 0) {
+              localStorage.setItem('shopit_cart', JSON.stringify(res.cart));
+            }
+          } catch {}
+        }
+      }
+    } catch {
+      // ignore fallback
+    }
+  }
+
   function notify(msg: string) {
     setToast(msg);
     window.setTimeout(() => setToast(''), 3500);
@@ -376,6 +500,7 @@ export default function Page() {
 
     try {
       if (accountMode === 'register') {
+        const registeredEmail = authForm.email;
         const res = await apiRequest('/api/users/register.php', 'POST', {
           first_name: authForm.first_name,
           last_name: authForm.last_name,
@@ -383,15 +508,31 @@ export default function Page() {
           password: authForm.password,
           referral_code: authForm.referral_code || undefined,
         });
-        notify(res.message || 'Account registered successfully! Please sign in.');
-        setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
+        notify(res.message || 'Account created! A magic verification link has been sent to your email.');
+        setAuthForm((prev) => ({ ...prev, email: registeredEmail, password: '' }));
         try {
           localStorage.removeItem('shopit_ref_code');
         } catch {
           // ignore
         }
-        setAccountMode('login');
+        setAccountMode('verify_notice');
+
+        // Optional frontend Nodemailer trigger
+        if (res.debug_token) {
+          fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'verification',
+              to: registeredEmail,
+              name: authForm.first_name,
+              token: res.debug_token,
+              frontendUrl: window.location.origin,
+            }),
+          }).catch(() => {});
+        }
       } else {
+        const guestItems = cart;
         const res = await apiRequest('/api/users/login.php', 'POST', {
           email: authForm.email,
           password: authForm.password,
@@ -413,6 +554,19 @@ export default function Page() {
         loadUserProfile();
         loadUserOrders();
         loadReferralData();
+        loadUserCart(guestItems);
+
+        // Optional frontend Nodemailer login alert trigger
+        fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'login_alert',
+            to: res.email,
+            name: res.first_name,
+            time: new Date().toLocaleString(),
+          }),
+        }).catch(() => {});
       }
     } catch (err: any) {
       setAuthError(err.message);
@@ -427,6 +581,12 @@ export default function Page() {
     setUserOrders([]);
     setReferralData(null);
     setAppliedCoupon(null);
+    setCart([]);
+    try {
+      localStorage.removeItem('shopit_cart');
+    } catch {
+      // ignore
+    }
     setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
     notify('Logged out successfully.');
   }
@@ -450,6 +610,12 @@ export default function Page() {
 
     setCheckoutLoading(true);
     try {
+      const currentCartItems = cart.map((line) => ({
+        name: line.product.product_name,
+        quantity: line.quantity,
+        price: line.product.price,
+      }));
+
       const payload = {
         shipping_address: checkoutForm.shipping_address,
         payment_method: checkoutForm.payment_method,
@@ -461,11 +627,41 @@ export default function Page() {
       };
 
       const result = await apiRequest('/api/checkout/checkout.php', 'POST', payload, true);
+      const finalOrderId = result.order_id;
+      const finalOrderTotal = result.total_amount || grandTotal;
+
       setLastOrderResult({
-        order_id: result.order_id,
-        total_amount: result.total_amount || grandTotal,
+        order_id: finalOrderId,
+        total_amount: finalOrderTotal,
       });
+
+      // Optional frontend Nodemailer order confirmation trigger
+      if (user?.email) {
+        fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'order_receipt',
+            to: user.email,
+            name: user.first_name || 'Customer',
+            orderId: finalOrderId,
+            items: currentCartItems,
+            subtotal,
+            discount: discountAmount,
+            tax,
+            total: finalOrderTotal,
+            shippingAddress: checkoutForm.shipping_address,
+            paymentMethod: checkoutForm.payment_method,
+          }),
+        }).catch(() => {});
+      }
+
       setCart([]);
+      try {
+        localStorage.removeItem('shopit_cart');
+      } catch {
+        // ignore
+      }
       setAppliedCoupon(null);
       setCouponInput('');
       loadUserOrders();
@@ -2081,8 +2277,8 @@ function AccountView({
   onNotify,
 }: {
   user: Partial<User> | null;
-  mode: 'login' | 'register';
-  setMode: (m: 'login' | 'register') => void;
+  mode: 'login' | 'register' | 'verify_notice';
+  setMode: (m: 'login' | 'register' | 'verify_notice') => void;
   form: { first_name: string; last_name: string; email: string; password: string; referral_code: string };
   setForm: React.Dispatch<React.SetStateAction<{ first_name: string; last_name: string; email: string; password: string; referral_code: string }>>;
   onSubmit: (e: React.FormEvent) => void;
@@ -2100,6 +2296,61 @@ function AccountView({
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // 30-Second Cooldown Timers
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+  const [verifyCooldown, setVerifyCooldown] = useState(0);
+
+  // Countdown intervals
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setForgotCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [forgotCooldown]);
+
+  useEffect(() => {
+    if (verifyCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setVerifyCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [verifyCooldown]);
+
+  // Forgot password states
+  const [forgotMode, setForgotMode] = useState<'none' | 'email' | 'otp' | 'new_password'>('none');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState('');
+  const [localFormError, setLocalFormError] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendNotice, setResendNotice] = useState('');
+  const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
+
+  // Password criteria for registration
+  const regHasMinLength = form.password.length >= 8;
+  const regHasUppercase = /[A-Z]/.test(form.password);
+  const regHasNumber = /[0-9]/.test(form.password);
+  const regHasSpecial = /[\W_]/.test(form.password);
+  const regPasswordValid = regHasMinLength && regHasUppercase && regHasNumber && regHasSpecial;
+  const regPasswordsMatch = form.password === confirmPassword && confirmPassword.length > 0;
+
+  // Password criteria for password reset
+  const resetHasMinLength = resetPassword.length >= 8;
+  const resetHasUppercase = /[A-Z]/.test(resetPassword);
+  const resetHasNumber = /[0-9]/.test(resetPassword);
+  const resetHasSpecial = /[\W_]/.test(resetPassword);
+  const resetPasswordValid = resetHasMinLength && resetHasUppercase && resetHasNumber && resetHasSpecial;
+  const resetPasswordsMatch = resetPassword === resetConfirmPassword && resetConfirmPassword.length > 0;
 
   function copyToClipboard(text: string, isLink = false) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -2112,6 +2363,120 @@ function AccountView({
         setTimeout(() => setCopiedCode(false), 2000);
       }
       onNotify('Copied to clipboard!');
+    }
+  }
+
+  function handleRegisterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLocalFormError('');
+
+    if (!regPasswordValid) {
+      setLocalFormError('Password must meet all listed security criteria.');
+      return;
+    }
+
+    if (form.password !== confirmPassword) {
+      setLocalFormError('Passwords do not match. Please recheck.');
+      return;
+    }
+
+    onSubmit(e);
+  }
+
+  // Resend Magic Verification Link with 30s Cooldown
+  async function handleResendVerificationLink() {
+    if (verifyCooldown > 0 || resendLoading) return;
+    setResendLoading(true);
+    setResendNotice('');
+
+    try {
+      const targetEmail = form.email || forgotEmail;
+      const res = await apiRequest('/api/users/resend-verification.php', 'POST', { email: targetEmail });
+      setResendNotice(res.message || 'New magic verification link sent to your email.');
+      setVerifyCooldown(30);
+      onNotify('Verification link sent! Check your inbox.');
+    } catch (err: any) {
+      setResendNotice(err.message || 'Unable to resend verification link.');
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
+  // Forgot password API calls with 30s Cooldown
+  async function handleSendForgotOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (forgotCooldown > 0 || forgotLoading) return;
+
+    setForgotError('');
+    setForgotLoading(true);
+
+    try {
+      const res = await apiRequest('/api/users/forgot-password.php', 'POST', { email: forgotEmail });
+      setForgotSuccess(res.message || 'Verification code sent to your email.');
+      setForgotCooldown(30);
+      setForgotMode('otp');
+    } catch (err: any) {
+      setForgotError(err.message || 'Unable to send password reset code.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function handleVerifyForgotOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError('');
+    setForgotLoading(true);
+
+    try {
+      await apiRequest('/api/users/verify-reset-code.php', 'POST', {
+        email: forgotEmail,
+        code: forgotOtp.trim(),
+      });
+      setForgotSuccess('Verification successful. Please enter your new password.');
+      setForgotMode('new_password');
+    } catch (err: any) {
+      setForgotError(err.message || 'Invalid or expired verification code.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function handleResetPasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError('');
+
+    if (!resetPasswordValid) {
+      setForgotError('New password must satisfy all 4 criteria.');
+      return;
+    }
+
+    if (!resetPasswordsMatch) {
+      setForgotError('New passwords do not match.');
+      return;
+    }
+
+    setForgotLoading(true);
+
+    try {
+      const res = await apiRequest('/api/users/reset-password.php', 'POST', {
+        email: forgotEmail,
+        code: forgotOtp.trim(),
+        new_password: resetPassword,
+      });
+
+      onNotify(res.message || 'Password updated successfully! Please sign in.');
+      setForgotMode('none');
+      setMode('login');
+      setForm((prev) => ({ ...prev, email: forgotEmail, password: '' }));
+      setForgotEmail('');
+      setForgotOtp('');
+      setResetPassword('');
+      setResetConfirmPassword('');
+      setForgotSuccess('');
+    } catch (err: any) {
+      setForgotError(err.message || 'Failed to update password.');
+    } finally {
+      setForgotLoading(false);
     }
   }
 
@@ -2198,16 +2563,16 @@ function AccountView({
               {/* Link Box */}
               <div className="bg-[#1f3342] p-3.5 border border-[#f5f5f1]/15">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#f5f5f1]/50 block mb-1">
-                  Shareable Referral Link
+                  Your Direct Invite Link
                 </span>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs text-[#f5f5f1]/80 truncate">
-                    {refLink || 'Generating link...'}
+                  <span className="font-mono text-xs text-[#e0ee56] truncate max-w-[180px] sm:max-w-[200px]">
+                    {refLink || 'GENERATING...'}
                   </span>
                   <button
                     onClick={() => copyToClipboard(refLink, true)}
                     disabled={!refLink}
-                    className="shrink-0 inline-flex items-center gap-1 bg-[#e0ee56] text-[#14212b] px-2.5 py-1 text-[11px] font-black uppercase hover:bg-white transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 bg-[#e0ee56] text-[#14212b] px-2.5 py-1 text-[11px] font-black uppercase hover:bg-white transition-colors cursor-pointer shrink-0"
                   >
                     {copiedLink ? <CheckCheck className="size-3" /> : <Share2 className="size-3" />}
                     <span>{copiedLink ? 'Copied' : 'Copy Link'}</span>
@@ -2218,85 +2583,65 @@ function AccountView({
           </div>
         </div>
 
-        {/* Coupon Wallet */}
-        <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-5 sm:p-7">
-          <div className="flex items-center justify-between border-b border-[#14212b]/15 pb-4 mb-6">
+        {/* Coupons Hub */}
+        <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-7">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#14212b]/15 pb-4 mb-6">
             <div className="flex items-center gap-2">
               <Ticket className="size-5 text-[#9a4e2c]" />
               <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight">
-                My Coupon Wallet
+                My Rewards & Coupons ({referralData?.coupons?.length || 0})
               </h2>
             </div>
-            <button
-              onClick={onRefreshReferrals}
-              className="inline-flex items-center gap-1.5 text-xs font-bold uppercase text-[#9a4e2c] hover:underline cursor-pointer"
-            >
-              <RefreshCw className={'size-3 ' + (referralLoading ? 'animate-spin' : '')} /> Refresh Coupons
-            </button>
+            <p className="text-xs text-[#14212b]/60">
+              Coupons apply automatically or can be copied to checkout.
+            </p>
           </div>
 
           {referralLoading && !referralData ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-28 w-full" />
+                <div key={i} className="p-4 bg-[#f5f5f1] border border-[#14212b]/10 space-y-2">
+                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-4 w-36" />
+                </div>
               ))}
             </div>
           ) : !referralData?.coupons || referralData.coupons.length === 0 ? (
-            <div className="border border-dashed border-[#14212b]/20 p-8 text-center text-xs text-[#14212b]/60">
-              <Gift className="size-8 mx-auto mb-2 text-[#14212b]/30" />
-              <p className="font-bold text-sm text-[#14212b]">No Coupons Yet</p>
-              <p className="mt-1">Share your referral link with friends to earn 5% discount coupons automatically.</p>
+            <div className="bg-[#f5f5f1] p-8 text-center border border-dashed border-[#14212b]/20">
+              <Ticket className="size-8 mx-auto text-[#14212b]/30 mb-2" />
+              <p className="text-xs font-bold text-[#14212b]/70">No active coupons available yet.</p>
+              <p className="text-[11px] text-[#14212b]/50 mt-1">
+                Share your referral code above to earn 5% discount coupons on every successful friend signup!
+              </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {referralData.coupons.map((coupon) => {
-                const isUsed = Number(coupon.is_used) === 1;
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {referralData.coupons.map((cp) => {
+                const expiryInfo = formatCouponExpiry(cp.expires_at, cp.is_used, cp.is_expired);
+                const isUsable = Number(cp.is_used) === 0 && !cp.is_expired;
+
                 return (
                   <div
-                    key={coupon.coupon_id}
-                    className={
-                      'border p-4 flex flex-col justify-between gap-3 ' +
-                      (isUsed
-                        ? 'border-[#14212b]/15 bg-[#e8e8e1]/50 opacity-60'
-                        : 'border-[#14212b] bg-[#e8e8e1] shadow-md')
-                    }
+                    key={cp.coupon_id}
+                    className={'p-4 border transition-all ' + (isUsable ? 'border-[#14212b] bg-[#f5f5f1] shadow-md' : 'border-[#14212b]/10 bg-[#f5f5f1]/50 opacity-60')}
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={
-                            'px-2 py-1 text-xs font-black ' +
-                            (isUsed
-                              ? 'bg-gray-300 text-gray-700'
-                              : 'bg-[#14212b] text-[#e0ee56]')
-                          }
-                        >
-                          {coupon.discount_percent}% OFF
-                        </span>
-                      </div>
-                      <span
-                        className={
-                          'text-[10px] font-black uppercase px-2 py-0.5 ' +
-                          (isUsed ? 'bg-gray-200 text-gray-600' : 'bg-emerald-100 text-emerald-800')
-                        }
-                      >
-                        {isUsed ? 'Redeemed' : 'Active'}
+                    <div className="flex items-center justify-between">
+                      <span className={'px-2 py-0.5 text-[10px] font-black uppercase font-mono ' + (isUsable ? 'bg-[#9a4e2c] text-[#f5f5f1]' : 'bg-[#14212b]/20 text-[#14212b]/60')}>
+                        {cp.discount_percent}% OFF
+                      </span>
+                      <span className={'text-[10px] font-bold ' + (expiryInfo.urgent ? 'text-red-600 animate-pulse' : 'text-[#14212b]/60')}>
+                        {expiryInfo.text}
                       </span>
                     </div>
 
-                    <div>
-                      <span className="text-[10px] font-bold uppercase text-[#14212b]/50 block">Coupon Code</span>
-                      <p className="font-mono font-black text-sm tracking-wider">{coupon.code}</p>
-                    </div>
-
-                    <div className="border-t border-[#14212b]/10 pt-2 flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-[#9a4e2c]">Min. 3 Items at Checkout</span>
-                      {!isUsed && (
+                    <div className="mt-3 flex items-center justify-between gap-2 border border-dashed border-[#14212b]/20 bg-white p-2">
+                      <span className="font-mono font-black text-sm text-[#14212b]">{cp.code}</span>
+                      {isUsable && (
                         <button
-                          onClick={() => copyToClipboard(coupon.code)}
-                          className="text-[#14212b] hover:underline cursor-pointer flex items-center gap-1 font-black"
+                          onClick={() => copyToClipboard(cp.code)}
+                          className="text-[10px] font-bold text-[#9a4e2c] hover:underline cursor-pointer uppercase"
                         >
-                          <Copy className="size-3" /> Copy
+                          Copy
                         </button>
                       )}
                     </div>
@@ -2377,6 +2722,7 @@ function AccountView({
                     <th className="p-3">Date</th>
                     <th className="p-3">Total (₦)</th>
                     <th className="p-3">Status</th>
+                    <th className="p-3 text-right">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#14212b]/10">
@@ -2388,26 +2734,71 @@ function AccountView({
                           <td className="p-3"><Skeleton className="h-4 w-20" /></td>
                           <td className="p-3"><Skeleton className="h-4 w-16" /></td>
                           <td className="p-3"><Skeleton className="h-5 w-16" /></td>
+                          <td className="p-3 text-right"><Skeleton className="h-4 w-10 ml-auto" /></td>
                         </tr>
                       ))}
                     </>
                   ) : orders.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-6 text-center text-xs text-[#14212b]/50">No orders placed yet.</td>
+                      <td colSpan={5} className="p-6 text-center text-xs text-[#14212b]/50">No orders placed yet.</td>
                     </tr>
                   ) : (
-                    orders.map((o) => (
-                      <tr key={o.order_id} className="hover:bg-[#e8e8e1]/40">
-                        <td className="p-3 font-black">#{o.order_id}</td>
-                        <td className="p-3 text-[#14212b]/60">{o.order_date}</td>
-                        <td className="p-3 font-black">{money(o.total_amount)}</td>
-                        <td className="p-3">
-                          <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase bg-[#d1fae5] text-[#065f46]">
-                            {o.order_status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    orders.map((o) => {
+                      const isExpanded = Number(expandedOrderId) === Number(o.order_id);
+                      return (
+                        <React.Fragment key={o.order_id}>
+                          <tr
+                            onClick={() => setExpandedOrderId(isExpanded ? null : Number(o.order_id))}
+                            className="hover:bg-[#e8e8e1]/60 cursor-pointer transition-colors"
+                          >
+                            <td className="p-3 font-black">#{o.order_id}</td>
+                            <td className="p-3 text-[#14212b]/60">{o.order_date}</td>
+                            <td className="p-3 font-black">{money(o.total_amount)}</td>
+                            <td className="p-3">
+                              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase bg-[#d1fae5] text-[#065f46]">
+                                {o.order_status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right text-[#9a4e2c] font-bold text-[11px]">
+                              {isExpanded ? 'Hide ▲' : 'View ▼'}
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-[#e8e8e1]/40">
+                              <td colSpan={5} className="p-4 border-t border-b border-[#14212b]/10">
+                                <div className="space-y-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#9a4e2c]">
+                                    Items in Order #{o.order_id}:
+                                  </p>
+                                  {o.items && o.items.length > 0 ? (
+                                    <div className="divide-y divide-[#14212b]/10 border border-[#14212b]/10 bg-white">
+                                      {o.items.map((item, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-2.5 text-xs">
+                                          <span className="font-bold text-[#14212b] truncate max-w-[200px]">
+                                            {item.product_name}
+                                          </span>
+                                          <div className="flex items-center gap-3 font-mono text-[11px]">
+                                            <span className="text-[#14212b]/60">Qty: {item.quantity}</span>
+                                            <span className="font-bold text-[#9a4e2c]">{money(item.unit_price)}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-xs text-[#14212b]/60">Standard wholesale items.</p>
+                                  )}
+                                  {o.shipping_address && (
+                                    <p className="text-[11px] text-[#14212b]/70 pt-1">
+                                      <strong>Delivery Address:</strong> {o.shipping_address}
+                                    </p>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -2422,132 +2813,494 @@ function AccountView({
     <section className="mx-auto max-w-md px-4 sm:px-5 py-12 sm:py-20">
       <div className="text-center mb-8">
         <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Welcome to ShopIt</p>
-        <h1 className="mt-1 text-3xl sm:text-4xl font-black uppercase tracking-tight">Account Access</h1>
+        <h1 className="mt-1 text-3xl sm:text-4xl font-black uppercase tracking-tight">
+          {mode === 'verify_notice' ? 'Activate Account' : forgotMode !== 'none' ? 'Account Recovery' : 'Account Access'}
+        </h1>
       </div>
 
       <div className="border border-[#14212b]/20 bg-[#e8e8e1] p-6 sm:p-8 shadow-xl">
-        <div className="flex border-b border-[#14212b]/15 mb-6">
-          <button
-            onClick={() => setMode('login')}
-            className={'flex-1 pb-3 text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ' + (mode === 'login' ? 'border-b-2 border-[#9a4e2c] text-[#14212b]' : 'text-[#14212b]/40 hover:text-[#14212b]')}
-          >
-            Sign In
-          </button>
-          <button
-            onClick={() => setMode('register')}
-            className={'flex-1 pb-3 text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ' + (mode === 'register' ? 'border-b-2 border-[#9a4e2c] text-[#14212b]' : 'text-[#14212b]/40 hover:text-[#14212b]')}
-          >
-            Create Account
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-6 flex items-start gap-2 bg-[#fee2e2] border border-[#991b1b]/20 p-3 text-xs text-[#991b1b]">
-            <AlertCircle className="size-4 shrink-0 mt-0.5" />
-            <p>{error}</p>
+        {mode !== 'verify_notice' && forgotMode === 'none' && (
+          <div className="flex border-b border-[#14212b]/15 mb-6">
+            <button
+              onClick={() => { setMode('login'); setLocalFormError(''); }}
+              className={'flex-1 pb-3 text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ' + (mode === 'login' ? 'border-b-2 border-[#9a4e2c] text-[#14212b]' : 'text-[#14212b]/40 hover:text-[#14212b]')}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => { setMode('register'); setLocalFormError(''); }}
+              className={'flex-1 pb-3 text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ' + (mode === 'register' ? 'border-b-2 border-[#9a4e2c] text-[#14212b]' : 'text-[#14212b]/40 hover:text-[#14212b]')}
+            >
+              Create Account
+            </button>
           </div>
         )}
 
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          {mode === 'register' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">First Name</label>
-                <input
-                  required
-                  value={form.first_name}
-                  onChange={(e) => setForm({ ...form, first_name: e.target.value })}
-                  placeholder="First name"
-                  className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Last Name</label>
-                <input
-                  required
-                  value={form.last_name}
-                  onChange={(e) => setForm({ ...form, last_name: e.target.value })}
-                  placeholder="Last name"
-                  className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
-                />
+        {(error || localFormError) && mode !== 'verify_notice' && forgotMode === 'none' && (
+          <div className="mb-6 flex items-start gap-2 bg-[#fee2e2] border border-[#991b1b]/20 p-3 text-xs text-[#991b1b]">
+            <AlertCircle className="size-4 shrink-0 mt-0.5" />
+            <p>{localFormError || error}</p>
+          </div>
+        )}
+
+        {forgotError && forgotMode !== 'none' && (
+          <div className="mb-6 flex items-start gap-2 bg-[#fee2e2] border border-[#991b1b]/20 p-3 text-xs text-[#991b1b]">
+            <AlertCircle className="size-4 shrink-0 mt-0.5" />
+            <p>{forgotError}</p>
+          </div>
+        )}
+
+        {forgotSuccess && forgotMode !== 'none' && (
+          <div className="mb-6 flex items-start gap-2 bg-emerald-50 border border-emerald-600/20 p-3 text-xs text-emerald-800">
+            <CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600" />
+            <p>{forgotSuccess}</p>
+          </div>
+        )}
+
+        {/* --- 1. MAGIC LINK VERIFICATION NOTICE VIEW --- */}
+        {mode === 'verify_notice' && (
+          <div className="flex flex-col items-center text-center gap-4 py-2">
+            <div className="size-14 rounded-full bg-[#14212b] grid place-items-center text-[#e0ee56] shadow-lg mb-1">
+              <Mail className="size-7" />
+            </div>
+
+            <div>
+              <h2 className="text-xl font-black uppercase tracking-tight text-[#14212b]">
+                Magic Link Sent!
+              </h2>
+              <p className="mt-1 text-xs text-[#14212b]/70 max-w-xs mx-auto leading-relaxed">
+                We've sent a magic activation link to:
+              </p>
+              <div className="mt-2 bg-[#f5f5f1] border border-[#14212b]/20 px-3 py-2 text-xs font-mono font-bold text-[#14212b]">
+                {form.email}
               </div>
             </div>
-          )}
 
-          <div>
-            <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Email Address</label>
-            <input
-              type="email"
-              required
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              placeholder="yourname@gmail.com"
-              className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
-            />
-          </div>
+            <div className="bg-[#f5f5f1] border border-[#14212b]/15 p-4 text-left text-xs text-[#14212b]/80 space-y-1.5 w-full">
+              <p className="font-bold text-[#14212b] flex items-center gap-1.5">
+                <Sparkles className="size-3.5 text-[#9a4e2c]" /> How it works:
+              </p>
+              <p>1. Open the email in your inbox from <strong>ShopIt Commerce</strong>.</p>
+              <p>2. Click the <strong>"Verify & Activate Account"</strong> button.</p>
+              <p>3. You will be automatically authenticated with your rewards unlocked!</p>
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Password</label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="••••••••"
-                className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
-              />
+            {resendNotice && (
+              <div className="w-full text-xs font-bold p-3 bg-emerald-50 border border-emerald-600/20 text-emerald-800 text-center">
+                {resendNotice}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 w-full mt-2">
               <button
                 type="button"
-                onClick={() => setShowPassword((visible) => !visible)}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                title={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+                onClick={handleResendVerificationLink}
+                disabled={verifyCooldown > 0 || resendLoading}
+                className="w-full flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-wider text-[#e0ee56] hover:bg-[#14212b]/90 disabled:opacity-50 cursor-pointer shadow-md transition-all"
               >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                {resendLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>Sending Link...</span>
+                  </>
+                ) : verifyCooldown > 0 ? (
+                  <span>Resend link in {verifyCooldown}s</span>
+                ) : (
+                  <>
+                    <RefreshCw className="size-3.5" />
+                    <span>Resend Verification Link</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setResendNotice(''); }}
+                className="w-full py-2.5 text-xs font-bold text-[#14212b]/70 hover:text-[#14212b] cursor-pointer"
+              >
+                Back to Sign In
               </button>
             </div>
           </div>
+        )}
 
-          {mode === 'register' && (
-            <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-3">
-              <label className="block text-[10px] font-black uppercase tracking-wider text-[#9a4e2c] mb-1 flex items-center gap-1.5">
-                <Gift className="size-3 text-[#9a4e2c]" /> Referral Code (Optional)
+        {/* --- 2. SIGN IN & REGISTRATION FORMS --- */}
+        {mode !== 'verify_notice' && forgotMode === 'none' && (
+          <form onSubmit={mode === 'register' ? handleRegisterSubmit : onSubmit} className="flex flex-col gap-4">
+            {mode === 'register' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">First Name</label>
+                  <input
+                    required
+                    value={form.first_name}
+                    onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                    placeholder="First name"
+                    className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Last Name</label>
+                  <input
+                    required
+                    value={form.last_name}
+                    onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                    placeholder="Last name"
+                    className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Email Address</label>
+              <input
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="yourname@gmail.com"
+                className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70">Password</label>
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotEmail(form.email);
+                      setForgotError('');
+                      setForgotSuccess('');
+                      setForgotMode('email');
+                    }}
+                    className="text-[11px] font-bold text-[#9a4e2c] hover:underline cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Password Criteria Checklist (on Register) */}
+            {mode === 'register' && (
+              <div className="bg-[#f5f5f1] border border-[#14212b]/15 p-3 text-xs flex flex-col gap-1.5">
+                <p className="font-bold text-[10px] uppercase tracking-wider text-[#14212b]/70">Password Requirements</p>
+                <div className="flex items-center gap-2">
+                  {regHasMinLength ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                  <span className={regHasMinLength ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>Minimum 8 characters</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {regHasUppercase ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                  <span className={regHasUppercase ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one uppercase letter</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {regHasNumber ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                  <span className={regHasNumber ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one number</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {regHasSpecial ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                  <span className={regHasSpecial ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one special character</span>
+                </div>
+              </div>
+            )}
+
+            {/* Confirm Password (on Register) */}
+            {mode === 'register' && (
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Confirm Password</label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((visible) => !visible)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+                  >
+                    {showConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                {confirmPassword.length > 0 && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+                    {regPasswordsMatch ? (
+                      <>
+                        <Check className="size-3.5 text-emerald-600" />
+                        <span className="text-emerald-700 font-medium text-[11px]">Passwords match</span>
+                      </>
+                    ) : (
+                      <>
+                        <X className="size-3.5 text-red-500" />
+                        <span className="text-red-600 font-medium text-[11px]">Passwords do not match</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mode === 'register' && (
+              <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-3">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-[#9a4e2c] mb-1 flex items-center gap-1.5">
+                  <Gift className="size-3 text-[#9a4e2c]" /> Referral Code (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={form.referral_code}
+                  onChange={(e) => setForm({ ...form, referral_code: e.target.value.toUpperCase() })}
+                  placeholder="e.g. SHOP-A1B2C3"
+                  className="w-full border border-[#14212b]/20 bg-white px-3 py-2 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+                />
+                <p className="mt-1 text-[10px] text-[#14212b]/60">
+                  Entering a referral code grants you a <strong>20% discount coupon</strong> for your first order with 3+ items!
+                </p>
+              </div>
+            )}
+
+            <button
+              disabled={loading}
+              className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-[.15em] text-[#e0ee56] disabled:opacity-50 cursor-pointer hover:bg-[#14212b]/90 transition-all shadow-md"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
+                </>
+              ) : mode === 'register' ? (
+                'Create Account & Get Rewards'
+              ) : (
+                'Sign In'
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* --- 3. FORGOT PASSWORD STEP 1: ENTER EMAIL --- */}
+        {forgotMode === 'email' && (
+          <form onSubmit={handleSendForgotOtp} className="flex flex-col gap-4">
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                Enter Your Registered Email
+              </label>
+              <input
+                type="email"
+                required
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                placeholder="yourname@gmail.com"
+                className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2.5 text-xs outline-none focus:border-[#9a4e2c]"
+              />
+              <p className="mt-1.5 text-[11px] text-[#14212b]/60">
+                We'll dispatch a 6-digit verification code to reset your account password.
+              </p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={forgotCooldown > 0 || forgotLoading}
+              className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3 text-xs font-black uppercase tracking-wider text-[#e0ee56] hover:bg-[#14212b]/90 cursor-pointer shadow-md disabled:opacity-50"
+            >
+              {forgotLoading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Sending Code...</span>
+                </>
+              ) : forgotCooldown > 0 ? (
+                <span>Resend in {forgotCooldown}s</span>
+              ) : (
+                <>
+                  <KeyRound className="size-4" />
+                  <span>Send Verification Code</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setForgotMode('none')}
+              className="mt-1 flex items-center justify-center gap-1.5 text-xs font-bold text-[#14212b]/70 hover:text-[#14212b] cursor-pointer"
+            >
+              <ArrowLeft className="size-3.5" /> Back to Sign In
+            </button>
+          </form>
+        )}
+
+        {/* --- 4. FORGOT PASSWORD STEP 2: ENTER OTP --- */}
+        {forgotMode === 'otp' && (
+          <form onSubmit={handleVerifyForgotOtp} className="flex flex-col gap-4">
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                6-Digit Verification Code
               </label>
               <input
                 type="text"
-                value={form.referral_code}
-                onChange={(e) => setForm({ ...form, referral_code: e.target.value.toUpperCase() })}
-                placeholder="e.g. SHOP-A1B2C3"
-                className="w-full border border-[#14212b]/20 bg-white px-3 py-2 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+                required
+                maxLength={6}
+                value={forgotOtp}
+                onChange={(e) => setForgotOtp(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="123456"
+                className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-3 text-center text-lg font-mono font-bold tracking-[0.25em] outline-none focus:border-[#9a4e2c]"
               />
-              <p className="mt-1 text-[10px] text-[#14212b]/60">
-                Entering a referral code grants you a <strong>20% discount coupon</strong> for your first order with 3+ items!
+              <p className="mt-1.5 text-[11px] text-[#14212b]/60">
+                Enter the 6-digit code sent to <strong>{forgotEmail}</strong>.
               </p>
             </div>
-          )}
 
-          <button
-            disabled={loading}
-            className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-[.15em] text-[#e0ee56] disabled:opacity-50 cursor-pointer hover:bg-[#14212b]/90 transition-all shadow-md"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
-              </>
-            ) : mode === 'register' ? (
-              'Create Account & Get Rewards'
-            ) : (
-              'Sign In'
-            )}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={forgotLoading}
+              className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3 text-xs font-black uppercase tracking-wider text-[#e0ee56] hover:bg-[#14212b]/90 cursor-pointer shadow-md disabled:opacity-50"
+            >
+              {forgotLoading ? <Loader2 className="size-4 animate-spin" /> : <ArrowRight className="size-4" />}
+              <span>{forgotLoading ? 'Verifying Code...' : 'Verify Code'}</span>
+            </button>
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <button
+                type="button"
+                onClick={handleSendForgotOtp}
+                disabled={forgotCooldown > 0 || forgotLoading}
+                className="font-bold text-[#9a4e2c] hover:underline disabled:opacity-50 cursor-pointer"
+              >
+                {forgotCooldown > 0 ? `Resend code in ${forgotCooldown}s` : 'Resend Code'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setForgotMode('email')}
+                className="flex items-center gap-1 font-bold text-[#14212b]/70 hover:text-[#14212b] cursor-pointer"
+              >
+                <ArrowLeft className="size-3.5" /> Change Email
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* --- 5. FORGOT PASSWORD STEP 3: SET NEW PASSWORD --- */}
+        {forgotMode === 'new_password' && (
+          <form onSubmit={handleResetPasswordSubmit} className="flex flex-col gap-4">
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                New Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showResetPassword ? 'text' : 'password'}
+                  required
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword(!showResetPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+                >
+                  {showResetPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Password Criteria Checklist */}
+            <div className="bg-[#f5f5f1] border border-[#14212b]/15 p-3 text-xs flex flex-col gap-1.5">
+              <p className="font-bold text-[10px] uppercase tracking-wider text-[#14212b]/70">Password Requirements</p>
+              <div className="flex items-center gap-2">
+                {resetHasMinLength ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                <span className={resetHasMinLength ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>Minimum 8 characters</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {resetHasUppercase ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                <span className={resetHasUppercase ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one uppercase letter</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {resetHasNumber ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                <span className={resetHasNumber ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one number</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {resetHasSpecial ? <Check className="size-3.5 text-emerald-600 font-black" /> : <X className="size-3.5 text-red-500" />}
+                <span className={resetHasSpecial ? 'text-emerald-700 font-semibold' : 'text-[#14212b]/60'}>At least one special character</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                Confirm New Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showResetConfirmPassword ? 'text' : 'password'}
+                  required
+                  value={resetConfirmPassword}
+                  onChange={(e) => setResetConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirmPassword(!showResetConfirmPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+                >
+                  {showResetConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+              {resetConfirmPassword.length > 0 && (
+                <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+                  {resetPasswordsMatch ? (
+                    <>
+                      <Check className="size-3.5 text-emerald-600" />
+                      <span className="text-emerald-700 font-medium text-[11px]">Passwords match</span>
+                    </>
+                  ) : (
+                    <>
+                      <X className="size-3.5 text-red-500" />
+                      <span className="text-red-600 font-medium text-[11px]">Passwords do not match</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={forgotLoading}
+              className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3 text-xs font-black uppercase tracking-wider text-[#e0ee56] hover:bg-[#14212b]/90 cursor-pointer shadow-md disabled:opacity-50"
+            >
+              {forgotLoading ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              <span>{forgotLoading ? 'Updating Password...' : 'Reset & Save Password'}</span>
+            </button>
+          </form>
+        )}
       </div>
     </section>
   );
 }
-
 
 function AboutView({
   stats,
