@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import {
   ArrowRight,
-  Home,
+  ArrowDown,
+  ArrowUp,
   Award,
   MapPin,
   Users2,
@@ -32,14 +33,54 @@ import {
   CheckCircle2,
   Quote,
   Loader2,
+  Gift,
+  Copy,
+  Tag,
+  Percent,
+  Share2,
+  CheckCheck,
+  Ticket,
+  Sparkles,
+  Clock,
+  Timer,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
-import { Product, Category, Order, CartLine, User, PlatformStats } from '@/lib/types';
+import { Product, Category, Order, CartLine, User, PlatformStats, Coupon, ReferralData } from '@/lib/types';
 import { money, sleep } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 
 type View = 'home' | 'shop' | 'product' | 'checkout' | 'confirmation' | 'account' | 'about';
+
+function formatCouponExpiry(expiresAt?: string, isUsed?: number | boolean, isExpired?: boolean) {
+  if (Number(isUsed) === 1 || isUsed === true) {
+    return { text: 'Redeemed', expired: false, urgent: false };
+  }
+  if (!expiresAt) {
+    return { text: '7 Days', expired: false, urgent: false };
+  }
+  const expiryTime = new Date(expiresAt.replace(' ', 'T')).getTime();
+  const now = Date.now();
+  const diffMs = expiryTime - now;
+
+  if (diffMs <= 0 || isExpired) {
+    return { text: 'Expired', expired: true, urgent: false };
+  }
+
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (days > 0) {
+    return { text: `${days}d ${hours}h left`, expired: false, urgent: days <= 1 };
+  }
+  if (hours > 0) {
+    return { text: `${hours}h ${mins}m left`, expired: false, urgent: true };
+  }
+  return { text: `${mins}m left`, expired: false, urgent: true };
+}
 
 export default function Page() {
   const [view, setView] = useState<View>('home');
@@ -53,6 +94,7 @@ export default function Page() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState('');
+  const [showScrollDown, setShowScrollDown] = useState(true);
 
   // Async Isolated States
   const [productsLoading, setProductsLoading] = useState(true);
@@ -62,9 +104,17 @@ export default function Page() {
   // Auth & Account State
   const [user, setUser] = useState<Partial<User> | null>(null);
   const [accountMode, setAccountMode] = useState<'login' | 'register'>('login');
-  const [authForm, setAuthForm] = useState({ first_name: '', last_name: '', email: '', password: '' });
+  const [authForm, setAuthForm] = useState({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  // Referral & Coupon State
+  const [referralData, setReferralData] = useState<ReferralData | null>(null);
+  const [referralLoading, setReferralLoading] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [couponInput, setCouponInput] = useState('');
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState('');
 
   // User Orders
   const [userOrders, setUserOrders] = useState<Order[]>([]);
@@ -83,11 +133,53 @@ export default function Page() {
 
   useEffect(() => {
     loadInitialData();
+
+    // Check for referral code in query params ?ref=CODE
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get('ref');
+      if (ref) {
+        const cleanRef = ref.trim().toUpperCase();
+        try {
+          localStorage.setItem('shopit_ref_code', cleanRef);
+        } catch {
+          // localStorage disabled fallback
+        }
+        setAuthForm((prev) => ({ ...prev, referral_code: cleanRef }));
+        notify(`Referral code ${cleanRef} applied! Create an account to receive 20% OFF.`);
+      } else {
+        try {
+          const storedRef = localStorage.getItem('shopit_ref_code');
+          if (storedRef) {
+            setAuthForm((prev) => ({ ...prev, referral_code: storedRef }));
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     if (isAuthenticated()) {
       setUser(getAuthUser());
       loadUserProfile();
       loadUserOrders();
+      loadReferralData();
     }
+  }, []);
+
+  useEffect(() => {
+    function updateScrollControl() {
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 24;
+      setShowScrollDown(!atBottom);
+    }
+
+    updateScrollControl();
+    window.addEventListener('scroll', updateScrollControl, { passive: true });
+    window.addEventListener('resize', updateScrollControl);
+    return () => {
+      window.removeEventListener('scroll', updateScrollControl);
+      window.removeEventListener('resize', updateScrollControl);
+    };
   }, []);
 
   async function loadProducts() {
@@ -171,6 +263,21 @@ export default function Page() {
     }
   }
 
+  async function loadReferralData() {
+    if (!isAuthenticated()) return;
+    setReferralLoading(true);
+    try {
+      const data = await apiRequest<ReferralData>('/api/referrals/my-referrals.php', 'GET', undefined, true);
+      if (data) {
+        setReferralData(data);
+      }
+    } catch {
+      // Ignore fallback
+    } finally {
+      setReferralLoading(false);
+    }
+  }
+
   function notify(msg: string) {
     setToast(msg);
     window.setTimeout(() => setToast(''), 3500);
@@ -213,8 +320,54 @@ export default function Page() {
     );
   }
 
+  // Cart & Discount Calculations
+  const totalCartItems = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const isCouponEligible = totalCartItems >= 3;
   const subtotal = cart.reduce((sum, line) => sum + Number(line.product.price) * line.quantity, 0);
-  const tax = subtotal * 0.075; // 7.5% Nigerian VAT
+  const activeDiscountPercent = appliedCoupon && isCouponEligible ? Number(appliedCoupon.discount_percent) : 0;
+  const discountAmount = Math.round((subtotal * activeDiscountPercent) / 100);
+  const finalSubtotal = Math.max(0, subtotal - discountAmount);
+  const tax = finalSubtotal * 0.075; // 7.5% Nigerian VAT
+  const grandTotal = finalSubtotal + tax;
+
+  async function handleApplyCoupon(codeToApply?: string) {
+    const code = (codeToApply || couponInput).trim();
+    if (!code) {
+      setCouponError('Please enter a coupon code.');
+      return;
+    }
+
+    if (totalCartItems < 3) {
+      setCouponError(`Coupons require at least 3 items in your cart (currently: ${totalCartItems}). Please add more items to use coupon.`);
+      return;
+    }
+
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      const res = await apiRequest('/api/coupons/validate.php', 'POST', {
+        coupon_code: code,
+        item_count: totalCartItems,
+      }, true);
+
+      if (res.coupon) {
+        setAppliedCoupon(res.coupon);
+        setCouponInput(res.coupon.code);
+        notify(`Coupon ${res.coupon.code} applied! ${res.discount_percent}% discount unlocked.`);
+      }
+    } catch (err: any) {
+      setCouponError(err.message || 'Invalid or expired coupon code.');
+    } finally {
+      setCouponLoading(false);
+    }
+  }
+
+  function handleRemoveCoupon() {
+    setAppliedCoupon(null);
+    setCouponInput('');
+    setCouponError('');
+    notify('Coupon removed from order.');
+  }
 
   async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -228,9 +381,15 @@ export default function Page() {
           last_name: authForm.last_name,
           email: authForm.email,
           password: authForm.password,
+          referral_code: authForm.referral_code || undefined,
         });
         notify(res.message || 'Account registered successfully! Please sign in.');
-        setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+        setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
+        try {
+          localStorage.removeItem('shopit_ref_code');
+        } catch {
+          // ignore
+        }
         setAccountMode('login');
       } else {
         const res = await apiRequest('/api/users/login.php', 'POST', {
@@ -249,9 +408,11 @@ export default function Page() {
           last_name: res.last_name,
           email: res.email,
         });
-        setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+        setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
         notify('Logged in successfully.');
+        loadUserProfile();
         loadUserOrders();
+        loadReferralData();
       }
     } catch (err: any) {
       setAuthError(err.message);
@@ -264,7 +425,9 @@ export default function Page() {
     clearAuth();
     setUser(null);
     setUserOrders([]);
-    setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+    setReferralData(null);
+    setAppliedCoupon(null);
+    setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
     notify('Logged out successfully.');
   }
 
@@ -275,7 +438,7 @@ export default function Page() {
     if (!isAuthenticated()) {
       setView('account');
       setAccountMode('login');
-      setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+      setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
       notify('Please sign in or create an account to complete checkout.');
       return;
     }
@@ -290,6 +453,7 @@ export default function Page() {
       const payload = {
         shipping_address: checkoutForm.shipping_address,
         payment_method: checkoutForm.payment_method,
+        coupon_code: appliedCoupon && isCouponEligible ? appliedCoupon.code : null,
         items: cart.map((line) => ({
           product_id: line.product_id,
           quantity: line.quantity,
@@ -299,10 +463,13 @@ export default function Page() {
       const result = await apiRequest('/api/checkout/checkout.php', 'POST', payload, true);
       setLastOrderResult({
         order_id: result.order_id,
-        total_amount: result.total_amount || (subtotal + tax),
+        total_amount: result.total_amount || grandTotal,
       });
       setCart([]);
+      setAppliedCoupon(null);
+      setCouponInput('');
       loadUserOrders();
+      loadReferralData();
       setView('confirmation');
       notify('Order placed successfully!');
     } catch (err: any) {
@@ -346,7 +513,6 @@ export default function Page() {
         <div className="bg-[#14212b] px-3 sm:px-5 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#e0ee56]">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between text-center sm:text-left">
             <span className="flex items-center gap-2">
-              <span className="size-1.5 rounded-full bg-[#e0ee56] animate-pulse" />
               Direct Retail & Wholesale Marketplace · Guaranteed Fast Delivery
             </span>
             <span className="hidden md:inline font-bold">Currency: Nigerian Naira (NGN / ₦)</span>
@@ -397,18 +563,17 @@ export default function Page() {
             </div>
 
             {/* Desktop Search Bar */}
-            <div className="relative hidden max-w-xs flex-1 md:block">
-              <Search className="absolute left-3 top-2.5 size-4 text-[#14212b]/50" />
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  if (view !== 'shop') setView('shop');
-                }}
-                placeholder="Search products, brands, categories..."
-                className="w-full border border-[#14212b]/20 bg-transparent py-2 pl-9 pr-3 text-xs outline-none placeholder:text-[#14212b]/45 focus:border-[#9a4e2c]"
-              />
-            </div>
+            {view === 'shop' && (
+              <div className="relative hidden max-w-xs flex-1 md:block">
+                <Search className="absolute left-3 top-2.5 size-4 text-[#14212b]/50" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search products, brands, categories..."
+                  className="w-full border border-[#14212b]/20 bg-transparent py-2 pl-9 pr-3 text-xs outline-none placeholder:text-[#14212b]/45 focus:border-[#9a4e2c]"
+                />
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex items-center gap-2 sm:gap-4">
@@ -438,7 +603,7 @@ export default function Page() {
           {/* Mobile Search & Menu Expandable */}
           {mobileMenuOpen && (
             <div className="border-t border-[#14212b]/15 bg-[#f5f5f1] p-4 md:hidden animate-in slide-in-from-top-2 duration-150">
-              <div className="relative mb-3">
+              {view === 'shop' && <div className="relative mb-3">
                 <Search className="absolute left-3 top-2.5 size-4 text-[#14212b]/50" />
                 <input
                   value={search}
@@ -449,7 +614,7 @@ export default function Page() {
                   placeholder="Search products..."
                   className="w-full border border-[#14212b]/20 bg-[#e8e8e1]/50 py-2 pl-9 pr-3 text-xs outline-none focus:border-[#9a4e2c]"
                 />
-              </div>
+              </div>}
               <div className="flex flex-col gap-2 text-xs font-black uppercase tracking-[0.14em]">
                 <button
                   onClick={() => { setView('shop'); setSelectedCategory(null); setMobileMenuOpen(false); }}
@@ -560,6 +725,18 @@ export default function Page() {
               loading={checkoutLoading}
               error={checkoutError}
               onBack={() => setView('shop')}
+              appliedCoupon={appliedCoupon}
+              couponInput={couponInput}
+              setCouponInput={setCouponInput}
+              couponLoading={couponLoading}
+              couponError={couponError}
+              onApplyCoupon={handleApplyCoupon}
+              onRemoveCoupon={handleRemoveCoupon}
+              availableCoupons={referralData?.active_coupons || []}
+              totalCartItems={totalCartItems}
+              isCouponEligible={isCouponEligible}
+              discountAmount={discountAmount}
+              grandTotal={grandTotal}
             />
           )}
 
@@ -578,7 +755,7 @@ export default function Page() {
               setMode={(m) => {
                 setAccountMode(m);
                 setAuthError('');
-                setAuthForm({ first_name: '', last_name: '', email: '', password: '' });
+                setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
               }}
               form={authForm}
               setForm={setAuthForm}
@@ -589,6 +766,10 @@ export default function Page() {
               orders={userOrders}
               ordersLoading={ordersLoading}
               onRefreshOrders={loadUserOrders}
+              referralData={referralData}
+              referralLoading={referralLoading}
+              onRefreshReferrals={loadReferralData}
+              onNotify={notify}
             />
           )}
 
@@ -807,19 +988,18 @@ export default function Page() {
         </div>
       </footer>
 
-      {/* Floating Bottom-Right Home Icon (Always Present on Every Page) */}
+      {/* Floating scroll control */}
       <button
         onClick={() => {
-          setView('home');
-          setSelectedCategory(null);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          window.scrollTo({ top: showScrollDown ? document.documentElement.scrollHeight : 0, behavior: 'smooth' });
         }}
-        aria-label="Back to Landing Page"
-        title="Go to Home"
+        aria-label={showScrollDown ? 'Scroll to bottom' : 'Back to top'}
+        title={showScrollDown ? 'Scroll to bottom' : 'Back to top'}
         className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 bg-[#14212b] text-[#e0ee56] hover:bg-[#1a2d3c] border-2 border-[#e0ee56] px-4 py-3 sm:px-5 sm:py-3.5 rounded-none shadow-2xl transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer group"
       >
-        <Home className="size-5 text-[#e0ee56] group-hover:-translate-y-0.5 transition-transform" />
-        <span className="text-xs font-black uppercase tracking-[0.16em]">Home</span>
+        {showScrollDown
+          ? <ArrowDown className="size-5 text-[#e0ee56] group-hover:translate-y-0.5 transition-transform" />
+          : <ArrowUp className="size-5 text-[#e0ee56] group-hover:-translate-y-0.5 transition-transform" />}
       </button>
 
       {/* Toast Notification */}
@@ -913,7 +1093,6 @@ function HomeView({
         <div className="mx-auto grid max-w-[1440px] gap-10 lg:gap-14 lg:grid-cols-[1.2fr_.8fr] lg:items-end">
           <div>
             <div className="mb-4 sm:mb-6 inline-flex flex-wrap items-center gap-2 border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-[#e0ee56]">
-              <span className="size-2 rounded-full bg-[#e0ee56] animate-pulse" />
               <span>Direct Pricing · Fast Nationwide Delivery</span>
             </div>
 
@@ -1554,6 +1733,18 @@ function CheckoutView({
   loading,
   error,
   onBack,
+  appliedCoupon,
+  couponInput,
+  setCouponInput,
+  couponLoading,
+  couponError,
+  onApplyCoupon,
+  onRemoveCoupon,
+  availableCoupons,
+  totalCartItems,
+  isCouponEligible,
+  discountAmount,
+  grandTotal,
 }: {
   cart: CartLine[];
   subtotal: number;
@@ -1564,6 +1755,18 @@ function CheckoutView({
   loading: boolean;
   error: string;
   onBack: () => void;
+  appliedCoupon: Coupon | null;
+  couponInput: string;
+  setCouponInput: (v: string) => void;
+  couponLoading: boolean;
+  couponError: string;
+  onApplyCoupon: (code?: string) => void;
+  onRemoveCoupon: () => void;
+  availableCoupons: Coupon[];
+  totalCartItems: number;
+  isCouponEligible: boolean;
+  discountAmount: number;
+  grandTotal: number;
 }) {
   return (
     <section className="mx-auto max-w-[1440px] px-3 sm:px-5 py-8 md:py-14">
@@ -1627,6 +1830,125 @@ function CheckoutView({
               </div>
             </div>
 
+            {/* Coupon & Referral Rewards Redemption */}
+            <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-black uppercase tracking-tight text-base flex items-center gap-2">
+                  <Tag className="size-4 text-[#9a4e2c]" /> 3. Referral Coupons & Discounts
+                </h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider bg-[#14212b] text-[#e0ee56] px-2 py-0.5">
+                  1 Coupon per checkout
+                </span>
+              </div>
+
+              {/* Min 3 Items Notice */}
+              <div
+                className={
+                  'p-3 mb-4 text-xs flex items-start gap-2.5 border ' +
+                  (isCouponEligible
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                    : 'bg-amber-50 border-amber-300 text-amber-900')
+                }
+              >
+                {isCouponEligible ? (
+                  <CheckCheck className="size-4 shrink-0 mt-0.5 text-emerald-700" />
+                ) : (
+                  <AlertCircle className="size-4 shrink-0 mt-0.5 text-amber-700" />
+                )}
+                <div>
+                  <p className="font-bold">
+                    {isCouponEligible
+                      ? `Cart Qualified (${totalCartItems} items in cart)`
+                      : `Cart Requires Minimum 3 Items (Currently: ${totalCartItems})`}
+                  </p>
+                  <p className="text-[11px] opacity-90 mt-0.5">
+                    {isCouponEligible
+                      ? 'You meet the 3-product threshold. Referral discount will be applied to your order subtotal.'
+                      : `Referral coupons strictly require a minimum of 3 items in your shopping bag. Add ${3 - totalCartItems} more item(s) to activate coupon.`}
+                  </p>
+                </div>
+              </div>
+
+              {appliedCoupon ? (
+                <div className="border border-emerald-500 bg-emerald-100/70 p-3.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid size-8 place-items-center bg-emerald-700 text-white font-mono font-black text-xs rounded">
+                      %{appliedCoupon.discount_percent}
+                    </span>
+                    <div>
+                      <p className="font-mono font-black text-xs text-emerald-950">
+                        {appliedCoupon.code}
+                      </p>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                        {appliedCoupon.discount_percent}% Discount Unlocked
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onRemoveCoupon}
+                    className="text-xs font-black uppercase text-red-700 hover:text-red-900 hover:underline cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      placeholder="ENTER COUPON CODE"
+                      className="flex-1 border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2.5 text-xs font-mono font-black tracking-wider outline-none focus:border-[#9a4e2c]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onApplyCoupon()}
+                      disabled={couponLoading || !couponInput.trim()}
+                      className="bg-[#14212b] text-[#e0ee56] px-5 py-2.5 text-xs font-black uppercase tracking-wider disabled:opacity-40 cursor-pointer hover:bg-[#1f3342] transition-colors"
+                    >
+                      {couponLoading ? <Loader2 className="size-3.5 animate-spin" /> : 'Apply'}
+                    </button>
+                  </div>
+
+                  {couponError && (
+                    <p className="text-xs font-bold text-red-700">{couponError}</p>
+                  )}
+
+                  {availableCoupons.length > 0 && (
+                    <div className="pt-2 border-t border-[#14212b]/10">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60 mb-2">
+                        Your Active Wallet Coupons (Click to Apply):
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {availableCoupons.map((c) => {
+                          const expiry = formatCouponExpiry(c.expires_at, c.is_used, c.is_expired);
+                          return (
+                            <button
+                              key={c.coupon_id}
+                              type="button"
+                              onClick={() => onApplyCoupon(c.code)}
+                              className="inline-flex items-center gap-1.5 border border-[#14212b]/20 bg-[#f5f5f1] px-2.5 py-1 text-xs font-mono font-bold hover:bg-[#14212b] hover:text-[#e0ee56] transition-colors cursor-pointer"
+                            >
+                              <Ticket className="size-3 text-[#9a4e2c]" />
+                              <span>{c.code}</span>
+                              <span className="font-sans text-[10px] font-black bg-[#e8e8e1] text-[#14212b] px-1 py-0.2">
+                                {c.discount_percent}% OFF
+                              </span>
+                              <span className="font-sans text-[9px] font-bold text-amber-800 bg-amber-100 px-1 py-0.2 rounded flex items-center gap-0.5">
+                                <Clock className="size-2.5" /> {expiry.text}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <button
               disabled={loading || cart.length === 0}
               className="bg-[#14212b] text-[#e0ee56] py-4 text-xs font-black uppercase tracking-[.16em] disabled:opacity-40 cursor-pointer hover:bg-[#14212b]/90 shadow-xl flex items-center justify-center gap-2"
@@ -1646,7 +1968,7 @@ function CheckoutView({
         {/* Order Summary */}
         <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-5 sm:p-6 h-fit">
           <h3 className="font-black uppercase tracking-tight text-base pb-4 border-b border-[#14212b]/15">
-            Order Summary ({cart.reduce((a, b) => a + b.quantity, 0)} Items)
+            Order Summary ({totalCartItems} Items)
           </h3>
 
           <div className="divide-y divide-[#14212b]/10 my-4 max-h-60 overflow-y-auto pr-2">
@@ -1666,13 +1988,23 @@ function CheckoutView({
               <span>Subtotal</span>
               <span className="font-mono font-black">{money(subtotal)}</span>
             </div>
+
+            {appliedCoupon && isCouponEligible && discountAmount > 0 && (
+              <div className="flex justify-between text-emerald-700 font-bold bg-emerald-50 p-1.5 -mx-1.5">
+                <span className="flex items-center gap-1">
+                  <Tag className="size-3" /> Referral Discount ({appliedCoupon.discount_percent}%)
+                </span>
+                <span className="font-mono font-black">-{money(discountAmount)}</span>
+              </div>
+            )}
+
             <div className="flex justify-between text-[#14212b]/70">
               <span>VAT (7.5%)</span>
               <span className="font-mono font-black">{money(tax)}</span>
             </div>
             <div className="flex justify-between text-base font-black border-t border-[#14212b]/15 pt-3">
               <span>Total Due (NGN)</span>
-              <span className="font-mono text-lg text-[#9a4e2c]">{money(subtotal + tax)}</span>
+              <span className="font-mono text-lg text-[#9a4e2c]">{money(grandTotal)}</span>
             </div>
           </div>
         </div>
@@ -1743,12 +2075,16 @@ function AccountView({
   orders,
   ordersLoading,
   onRefreshOrders,
+  referralData,
+  referralLoading,
+  onRefreshReferrals,
+  onNotify,
 }: {
   user: Partial<User> | null;
   mode: 'login' | 'register';
   setMode: (m: 'login' | 'register') => void;
-  form: { first_name: string; last_name: string; email: string; password: string };
-  setForm: React.Dispatch<React.SetStateAction<{ first_name: string; last_name: string; email: string; password: string }>>;
+  form: { first_name: string; last_name: string; email: string; password: string; referral_code: string };
+  setForm: React.Dispatch<React.SetStateAction<{ first_name: string; last_name: string; email: string; password: string; referral_code: string }>>;
   onSubmit: (e: React.FormEvent) => void;
   onLogout: () => void;
   loading: boolean;
@@ -1756,13 +2092,39 @@ function AccountView({
   orders: Order[];
   ordersLoading: boolean;
   onRefreshOrders: () => void;
+  referralData: ReferralData | null;
+  referralLoading: boolean;
+  onRefreshReferrals: () => void;
+  onNotify: (msg: string) => void;
 }) {
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  function copyToClipboard(text: string, isLink = false) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      if (isLink) {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      } else {
+        setCopiedCode(true);
+        setTimeout(() => setCopiedCode(false), 2000);
+      }
+      onNotify('Copied to clipboard!');
+    }
+  }
+
   if (user) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://shopit-users.vercel.app';
+    const refCode = referralData?.referral_code || user.referral_code || '';
+    const refLink = refCode ? `${origin}/?ref=${refCode}` : '';
+
     return (
-      <section className="mx-auto max-w-[1440px] px-3 sm:px-5 py-8 md:py-14">
+      <section className="mx-auto max-w-[1440px] px-3 sm:px-5 py-8 md:py-14 space-y-10">
         <div className="flex flex-col justify-between gap-5 border-b border-[#14212b]/15 pb-6 md:flex-row md:items-end">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Account Dashboard</p>
+            <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Account & Rewards Hub</p>
             <h1 className="mt-1 text-3xl sm:text-5xl font-black uppercase tracking-tight">
               Welcome, {user.first_name || 'Customer'}.
             </h1>
@@ -1775,18 +2137,227 @@ function AccountView({
           </button>
         </div>
 
-        <div className="mt-8 grid gap-8 lg:grid-cols-[.7fr_1.3fr]">
-          <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-6 h-fit">
-            <p className="text-[10px] font-black uppercase tracking-[.16em] text-[#9a4e2c]">User Profile</p>
-            <h2 className="mt-3 text-xl sm:text-2xl font-black">{user.first_name} {user.last_name}</h2>
-            <p className="mt-1 text-xs text-[#14212b]/60 font-mono">{user.email}</p>
-            <div className="mt-6 pt-6 border-t border-[#14212b]/15 text-xs text-[#14212b]/60 space-y-1">
-              <p>Account ID: #{user.user_id}</p>
-              <p>Status: Active</p>
-              <p>Currency: Nigerian Naira (₦)</p>
+        {/* Profile + Referral Sharing Card */}
+        <div className="grid gap-6 lg:grid-cols-[.6fr_1.4fr]">
+          {/* User Profile Card */}
+          <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-6 flex flex-col justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[.16em] text-[#9a4e2c]">Wholesale Profile</p>
+              <h2 className="mt-3 text-xl sm:text-2xl font-black">{user.first_name} {user.last_name}</h2>
+              <p className="mt-1 text-xs text-[#14212b]/60 font-mono">{user.email}</p>
+              <div className="mt-6 pt-6 border-t border-[#14212b]/15 text-xs text-[#14212b]/60 space-y-1.5">
+                <p><strong className="text-[#14212b]">Account ID:</strong> #{user.user_id}</p>
+                <p><strong className="text-[#14212b]">Membership:</strong> Active Trade Customer</p>
+                <p><strong className="text-[#14212b]">Currency:</strong> Nigerian Naira (₦)</p>
+              </div>
             </div>
           </div>
 
+          {/* Referral Program Card */}
+          <div className="border border-[#14212b] bg-[#14212b] text-[#f5f5f1] p-5 sm:p-7 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f5f5f1]/15 pb-4">
+              <div className="flex items-center gap-2">
+                <Gift className="size-5 text-[#e0ee56]" />
+                <h3 className="font-black uppercase tracking-tight text-lg sm:text-xl text-[#e0ee56]">
+                  Invite Friends & Earn 5% Off
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono uppercase tracking-wider bg-[#e0ee56] text-[#14212b] px-2 py-0.5 font-bold">
+                Unlimited Referrals
+              </span>
+            </div>
+
+            <p className="mt-4 text-xs sm:text-sm text-[#f5f5f1]/80 leading-relaxed">
+              Share your personal referral code or link. When friends join ShopIt, you earn a <strong>5% OFF</strong> coupon!
+              <span className="block mt-1 text-[11px] text-[#e0ee56]/90 font-medium">
+                * Note: All coupons require a minimum checkout of 3 products.
+              </span>
+            </p>
+
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Code Box */}
+              <div className="bg-[#1f3342] p-3.5 border border-[#f5f5f1]/15">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#f5f5f1]/50 block mb-1">
+                  Your Referral Code
+                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-black text-base text-[#e0ee56]">
+                    {refCode || 'GENERATING...'}
+                  </span>
+                  <button
+                    onClick={() => copyToClipboard(refCode)}
+                    disabled={!refCode}
+                    className="inline-flex items-center gap-1 bg-[#e0ee56] text-[#14212b] px-2.5 py-1 text-[11px] font-black uppercase hover:bg-white transition-colors cursor-pointer"
+                  >
+                    {copiedCode ? <CheckCheck className="size-3" /> : <Copy className="size-3" />}
+                    <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Link Box */}
+              <div className="bg-[#1f3342] p-3.5 border border-[#f5f5f1]/15">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#f5f5f1]/50 block mb-1">
+                  Shareable Referral Link
+                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs text-[#f5f5f1]/80 truncate">
+                    {refLink || 'Generating link...'}
+                  </span>
+                  <button
+                    onClick={() => copyToClipboard(refLink, true)}
+                    disabled={!refLink}
+                    className="shrink-0 inline-flex items-center gap-1 bg-[#e0ee56] text-[#14212b] px-2.5 py-1 text-[11px] font-black uppercase hover:bg-white transition-colors cursor-pointer"
+                  >
+                    {copiedLink ? <CheckCheck className="size-3" /> : <Share2 className="size-3" />}
+                    <span>{copiedLink ? 'Copied' : 'Copy Link'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Coupon Wallet */}
+        <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-5 sm:p-7">
+          <div className="flex items-center justify-between border-b border-[#14212b]/15 pb-4 mb-6">
+            <div className="flex items-center gap-2">
+              <Ticket className="size-5 text-[#9a4e2c]" />
+              <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight">
+                My Coupon Wallet
+              </h2>
+            </div>
+            <button
+              onClick={onRefreshReferrals}
+              className="inline-flex items-center gap-1.5 text-xs font-bold uppercase text-[#9a4e2c] hover:underline cursor-pointer"
+            >
+              <RefreshCw className={'size-3 ' + (referralLoading ? 'animate-spin' : '')} /> Refresh Coupons
+            </button>
+          </div>
+
+          {referralLoading && !referralData ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-28 w-full" />
+              ))}
+            </div>
+          ) : !referralData?.coupons || referralData.coupons.length === 0 ? (
+            <div className="border border-dashed border-[#14212b]/20 p-8 text-center text-xs text-[#14212b]/60">
+              <Gift className="size-8 mx-auto mb-2 text-[#14212b]/30" />
+              <p className="font-bold text-sm text-[#14212b]">No Coupons Yet</p>
+              <p className="mt-1">Share your referral link with friends to earn 5% discount coupons automatically.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {referralData.coupons.map((coupon) => {
+                const isUsed = Number(coupon.is_used) === 1;
+                return (
+                  <div
+                    key={coupon.coupon_id}
+                    className={
+                      'border p-4 flex flex-col justify-between gap-3 ' +
+                      (isUsed
+                        ? 'border-[#14212b]/15 bg-[#e8e8e1]/50 opacity-60'
+                        : 'border-[#14212b] bg-[#e8e8e1] shadow-md')
+                    }
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={
+                            'px-2 py-1 text-xs font-black ' +
+                            (isUsed
+                              ? 'bg-gray-300 text-gray-700'
+                              : 'bg-[#14212b] text-[#e0ee56]')
+                          }
+                        >
+                          {coupon.discount_percent}% OFF
+                        </span>
+                      </div>
+                      <span
+                        className={
+                          'text-[10px] font-black uppercase px-2 py-0.5 ' +
+                          (isUsed ? 'bg-gray-200 text-gray-600' : 'bg-emerald-100 text-emerald-800')
+                        }
+                      >
+                        {isUsed ? 'Redeemed' : 'Active'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-[#14212b]/50 block">Coupon Code</span>
+                      <p className="font-mono font-black text-sm tracking-wider">{coupon.code}</p>
+                    </div>
+
+                    <div className="border-t border-[#14212b]/10 pt-2 flex items-center justify-between text-[10px] font-bold">
+                      <span className="text-[#9a4e2c]">Min. 3 Items at Checkout</span>
+                      {!isUsed && (
+                        <button
+                          onClick={() => copyToClipboard(coupon.code)}
+                          className="text-[#14212b] hover:underline cursor-pointer flex items-center gap-1 font-black"
+                        >
+                          <Copy className="size-3" /> Copy
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Referred Users + Order History */}
+        <div className="grid gap-8 lg:grid-cols-[.9fr_1.1fr]">
+          {/* Referred List */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight flex items-center gap-2">
+                <Users2 className="size-5 text-[#9a4e2c]" /> My Referrals ({referralData?.referrals_count || 0})
+              </h2>
+            </div>
+
+            <div className="overflow-x-auto border border-[#14212b]/15 bg-[#f5f5f1]">
+              <table className="w-full min-w-[360px] text-left text-xs">
+                <thead className="bg-[#e8e8e1] text-[10px] font-black uppercase tracking-[.14em] text-[#14212b]/60 border-b border-[#14212b]/15">
+                  <tr>
+                    <th className="p-3">Friend / Name</th>
+                    <th className="p-3">Email</th>
+                    <th className="p-3">Date Joined</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#14212b]/10">
+                  {referralLoading && !referralData ? (
+                    <>
+                      {[1, 2].map((i) => (
+                        <tr key={i}>
+                          <td className="p-3"><Skeleton className="h-4 w-20" /></td>
+                          <td className="p-3"><Skeleton className="h-4 w-28" /></td>
+                          <td className="p-3"><Skeleton className="h-4 w-16" /></td>
+                        </tr>
+                      ))}
+                    </>
+                  ) : !referralData?.referrals || referralData.referrals.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="p-6 text-center text-xs text-[#14212b]/50">
+                        No friends have signed up with your link yet. Share your code above!
+                      </td>
+                    </tr>
+                  ) : (
+                    referralData.referrals.map((ref, idx) => (
+                      <tr key={idx} className="hover:bg-[#e8e8e1]/40">
+                        <td className="p-3 font-bold">{ref.name}</td>
+                        <td className="p-3 font-mono text-[#14212b]/70">{ref.masked_email}</td>
+                        <td className="p-3 text-[#14212b]/60">{ref.joined_date}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Orders History List */}
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight">My Order History</h2>
@@ -1799,13 +2370,13 @@ function AccountView({
             </div>
 
             <div className="overflow-x-auto border border-[#14212b]/15 bg-[#f5f5f1]">
-              <table className="w-full min-w-[500px] text-left text-sm">
+              <table className="w-full min-w-[360px] text-left text-xs">
                 <thead className="bg-[#e8e8e1] text-[10px] font-black uppercase tracking-[.14em] text-[#14212b]/60 border-b border-[#14212b]/15">
                   <tr>
-                    <th className="p-3 sm:p-4">Order ID</th>
-                    <th className="p-3 sm:p-4">Date</th>
-                    <th className="p-3 sm:p-4">Total (₦)</th>
-                    <th className="p-3 sm:p-4">Status</th>
+                    <th className="p-3">Order ID</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Total (₦)</th>
+                    <th className="p-3">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#14212b]/10">
@@ -1813,25 +2384,25 @@ function AccountView({
                     <>
                       {[1, 2, 3].map((i) => (
                         <tr key={i}>
-                          <td className="p-3 sm:p-4"><Skeleton className="h-4 w-16" /></td>
-                          <td className="p-3 sm:p-4"><Skeleton className="h-4 w-24" /></td>
-                          <td className="p-3 sm:p-4"><Skeleton className="h-4 w-20" /></td>
-                          <td className="p-3 sm:p-4"><Skeleton className="h-6 w-20" /></td>
+                          <td className="p-3"><Skeleton className="h-4 w-12" /></td>
+                          <td className="p-3"><Skeleton className="h-4 w-20" /></td>
+                          <td className="p-3"><Skeleton className="h-4 w-16" /></td>
+                          <td className="p-3"><Skeleton className="h-5 w-16" /></td>
                         </tr>
                       ))}
                     </>
                   ) : orders.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-8 text-center text-xs text-[#14212b]/50">No orders placed yet.</td>
+                      <td colSpan={4} className="p-6 text-center text-xs text-[#14212b]/50">No orders placed yet.</td>
                     </tr>
                   ) : (
                     orders.map((o) => (
                       <tr key={o.order_id} className="hover:bg-[#e8e8e1]/40">
-                        <td className="p-3 sm:p-4 font-black">#{o.order_id}</td>
-                        <td className="p-3 sm:p-4 text-xs text-[#14212b]/60">{o.order_date}</td>
-                        <td className="p-3 sm:p-4 font-black">{money(o.total_amount)}</td>
-                        <td className="p-3 sm:p-4">
-                          <span className="inline-block px-2.5 py-1 text-[10px] font-black uppercase bg-[#d1fae5] text-[#065f46]">
+                        <td className="p-3 font-black">#{o.order_id}</td>
+                        <td className="p-3 text-[#14212b]/60">{o.order_date}</td>
+                        <td className="p-3 font-black">{money(o.total_amount)}</td>
+                        <td className="p-3">
+                          <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase bg-[#d1fae5] text-[#065f46]">
                             {o.order_status}
                           </span>
                         </td>
@@ -1917,19 +2488,48 @@ function AccountView({
 
           <div>
             <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">Password</label>
-            <input
-              type="password"
-              required
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="••••••••"
-              className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 text-xs outline-none focus:border-[#9a4e2c]"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                placeholder="••••••••"
+                className="w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2 pr-10 text-xs outline-none focus:border-[#9a4e2c]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#14212b]/60 hover:text-[#14212b]"
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
           </div>
+
+          {mode === 'register' && (
+            <div className="border border-[#14212b]/15 bg-[#f5f5f1] p-3">
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#9a4e2c] mb-1 flex items-center gap-1.5">
+                <Gift className="size-3 text-[#9a4e2c]" /> Referral Code (Optional)
+              </label>
+              <input
+                type="text"
+                value={form.referral_code}
+                onChange={(e) => setForm({ ...form, referral_code: e.target.value.toUpperCase() })}
+                placeholder="e.g. SHOP-A1B2C3"
+                className="w-full border border-[#14212b]/20 bg-white px-3 py-2 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+              />
+              <p className="mt-1 text-[10px] text-[#14212b]/60">
+                Entering a referral code grants you a <strong>20% discount coupon</strong> for your first order with 3+ items!
+              </p>
+            </div>
+          )}
 
           <button
             disabled={loading}
-            className="mt-4 flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-[.15em] text-[#e0ee56] disabled:opacity-50 cursor-pointer hover:bg-[#14212b]/90 transition-all shadow-md"
+            className="mt-2 flex items-center justify-center gap-2 bg-[#14212b] py-3.5 text-xs font-black uppercase tracking-[.15em] text-[#e0ee56] disabled:opacity-50 cursor-pointer hover:bg-[#14212b]/90 transition-all shadow-md"
           >
             {loading ? (
               <>
@@ -1937,7 +2537,7 @@ function AccountView({
                 <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
               </>
             ) : mode === 'register' ? (
-              'Create Account'
+              'Create Account & Get Rewards'
             ) : (
               'Sign In'
             )}

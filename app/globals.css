@@ -162,6 +162,98 @@
   }
 }
 
+@layer components {
+  /* Buttons */
+  .btn-primary {
+    @apply bg-[#14212b] text-[#e0ee56] font-black uppercase tracking-[0.14em] text-xs py-3.5 px-6 transition-all shadow-md cursor-pointer hover:bg-[#1f3342] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+
+  .btn-secondary {
+    @apply border border-[#14212b]/25 bg-[#f5f5f1] text-[#14212b] font-black uppercase tracking-wider text-xs py-2.5 px-4 transition-colors cursor-pointer hover:bg-[#e8e8e1] disabled:opacity-40 flex items-center justify-center gap-1.5;
+  }
+
+  .btn-lime {
+    @apply bg-[#e0ee56] text-[#14212b] font-black uppercase tracking-wider text-xs py-2 px-3 transition-colors cursor-pointer hover:bg-white shadow-xs flex items-center justify-center gap-1.5;
+  }
+
+  .btn-danger {
+    @apply bg-[#fee2e2] text-[#991b1b] border border-[#991b1b]/20 font-black uppercase tracking-wider text-xs py-2 px-3 transition-colors cursor-pointer hover:bg-[#991b1b] hover:text-white flex items-center justify-center gap-1.5;
+  }
+
+  .btn-pill {
+    @apply inline-flex items-center gap-1.5 border border-[#14212b]/20 bg-[#f5f5f1] px-2.5 py-1 text-xs font-mono font-bold hover:bg-[#14212b] hover:text-[#e0ee56] transition-colors cursor-pointer;
+  }
+
+  /* Form Elements */
+  .form-label {
+    @apply block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1;
+  }
+
+  .form-input {
+    @apply w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2.5 text-xs outline-none focus:border-[#9a4e2c] transition-colors placeholder:text-[#14212b]/40;
+  }
+
+  .form-input-mono {
+    @apply w-full border border-[#14212b]/20 bg-[#f5f5f1] px-3 py-2.5 text-xs font-mono font-bold tracking-wider outline-none focus:border-[#9a4e2c] transition-colors placeholder:text-[#14212b]/40;
+  }
+
+  /* Cards & Containers */
+  .card-stone {
+    @apply border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-6;
+  }
+
+  .card-dark {
+    @apply border border-[#14212b] bg-[#14212b] text-[#f5f5f1] p-5 sm:p-7 shadow-xl;
+  }
+
+  .card-glass {
+    @apply border border-[#14212b]/15 bg-[#f5f5f1] p-5 sm:p-6;
+  }
+
+  /* Badges */
+  .badge-active {
+    @apply text-[10px] font-black uppercase px-2 py-0.5 bg-emerald-100 text-emerald-800;
+  }
+
+  .badge-expired {
+    @apply text-[10px] font-black uppercase px-2 py-0.5 bg-red-100 text-red-700;
+  }
+
+  .badge-redeemed {
+    @apply text-[10px] font-black uppercase px-2 py-0.5 bg-gray-200 text-gray-600;
+  }
+
+  .badge-timer {
+    @apply font-bold text-[10px] px-1.5 py-0.5 rounded text-amber-900 bg-amber-100 flex items-center gap-1;
+  }
+
+  .badge-discount {
+    @apply px-2 py-1 text-xs font-black bg-[#14212b] text-[#e0ee56];
+  }
+
+  .badge-discount-muted {
+    @apply px-2 py-1 text-xs font-black bg-gray-300 text-gray-700;
+  }
+
+  /* Coupon Cards */
+  .coupon-card-active {
+    @apply border border-[#14212b] bg-[#e8e8e1] p-4 flex flex-col justify-between gap-3 shadow-md;
+  }
+
+  .coupon-card-inactive {
+    @apply border border-[#14212b]/15 bg-[#e8e8e1]/50 p-4 flex flex-col justify-between gap-3 opacity-60;
+  }
+
+  /* Tables */
+  .table-box {
+    @apply overflow-x-auto border border-[#14212b]/15 bg-[#f5f5f1];
+  }
+
+  .table-head-row {
+    @apply bg-[#e8e8e1] text-[10px] font-black uppercase tracking-[.14em] text-[#14212b]/60 border-b border-[#14212b]/15;
+  }
+}
+
 @keyframes shimmer {
   100% {
     transform: translateX(100%);
