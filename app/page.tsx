@@ -615,10 +615,12 @@ export default function Page() {
         });
         setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
         notify('Logged in successfully.');
-        loadUserProfile();
-        loadUserOrders();
-        loadReferralData();
-        loadUserCart(guestItems);
+        Promise.allSettled([
+          loadUserProfile(),
+          loadUserOrders(),
+          loadReferralData(),
+          loadUserCart(guestItems),
+        ]);
 
         // Optional frontend Nodemailer login alert trigger
         fetch('/api/send-email', {
@@ -787,6 +789,23 @@ export default function Page() {
       setAppliedCoupon(null);
       setCouponInput('');
       setCardForm({ card_number: '', expiry: '', cvv: '', cardholder_name: '' });
+
+      const newPlacedOrder: Order = {
+        order_id: finalOrderId,
+        user_id: Number(user?.user_id || 0),
+        total_amount: finalOrderTotal,
+        order_status: 'Pending',
+        order_date: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        shipping_address: checkoutForm.shipping_address,
+        items: cart.map((line) => ({
+          product_id: line.product_id,
+          product_name: line.product.product_name,
+          quantity: line.quantity,
+          unit_price: Number(line.product.price),
+        })),
+      };
+      setUserOrders((prev) => [newPlacedOrder, ...prev.filter((o) => Number(o.order_id) !== Number(finalOrderId))]);
+
       loadUserOrders();
       loadReferralData();
 
