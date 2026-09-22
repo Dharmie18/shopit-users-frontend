@@ -3444,7 +3444,7 @@ function AccountView({
               </p>
               <p>1. Open the email in your inbox from <strong>ShopIt Commerce</strong>.</p>
               <p>2. Click the <strong>"Verify & Activate Account"</strong> button.</p>
-              <p>3. You will be automatically authenticated with your rewards unlocked!</p>
+              <p>3. You will be automatically authenticated and loggedin to your dashboard.</p>
             </div>
 
             {resendNotice && (
@@ -3655,7 +3655,7 @@ function AccountView({
                   <span>{mode === 'register' ? 'Creating Account...' : 'Signing In...'}</span>
                 </>
               ) : mode === 'register' ? (
-                'Create Account & Get Rewards'
+                'Create Account'
               ) : (
                 'Sign In'
               )}
