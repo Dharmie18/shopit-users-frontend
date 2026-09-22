@@ -304,6 +304,15 @@ export default function Page() {
     }
   }, []);
 
+  // Reload user profile, orders, and rewards on entering account view
+  useEffect(() => {
+    if (view === 'account' && isAuthenticated()) {
+      loadUserProfile();
+      loadUserOrders();
+      loadReferralData();
+    }
+  }, [view]);
+
   // Sync Cart to LocalStorage and Backend Database (Debounced)
   useEffect(() => {
     if (!cartLoaded) return;
@@ -349,19 +358,10 @@ export default function Page() {
   async function loadProducts() {
     setProductsLoading(true);
     setProductsError('');
-    const startTime = Date.now();
     try {
       const prodData = await apiRequest<Product[]>('/api/products/products.php');
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 800) {
-        await sleep(800 - elapsed);
-      }
       setProducts(Array.isArray(prodData) ? prodData : []);
     } catch (err: any) {
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 800) {
-        await sleep(800 - elapsed);
-      }
       setProductsError(err.message || 'Unable to connect to product catalog.');
     } finally {
       setProductsLoading(false);
@@ -370,13 +370,8 @@ export default function Page() {
 
   async function loadCategories() {
     setCategoriesLoading(true);
-    const startTime = Date.now();
     try {
       const catData = await apiRequest<Category[]>('/api/categories/categories.php');
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 600) {
-        await sleep(600 - elapsed);
-      }
       setCategories(Array.isArray(catData) ? catData : []);
     } catch {
       // Keep default/empty categories gracefully
@@ -395,9 +390,7 @@ export default function Page() {
   }
 
   function loadInitialData() {
-    loadProducts();
-    loadCategories();
-    loadStats();
+    Promise.allSettled([loadProducts(), loadCategories(), loadStats()]);
   }
 
   async function loadUserProfile() {
@@ -412,13 +405,8 @@ export default function Page() {
 
   async function loadUserOrders() {
     setOrdersLoading(true);
-    const startTime = Date.now();
     try {
       const orders = await apiRequest<Order[]>('/api/users/orders.php', 'GET', undefined, true);
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 600) {
-        await sleep(600 - elapsed);
-      }
       setUserOrders(Array.isArray(orders) ? orders : []);
     } catch {
       setUserOrders([]);
@@ -3307,6 +3295,18 @@ function AccountView({
                   ) : (
                     orders.map((o) => {
                       const isExpanded = Number(expandedOrderId) === Number(o.order_id);
+                      const statusText = o.order_status || 'Processing';
+                      let badgeStyle = 'bg-[#dbeafe] text-[#1e40af]';
+                      if (statusText === 'Delivered') {
+                        badgeStyle = 'bg-[#d1fae5] text-[#065f46]';
+                      } else if (statusText === 'Shipped') {
+                        badgeStyle = 'bg-[#e0e7ff] text-[#3730a3]';
+                      } else if (statusText === 'Cancelled') {
+                        badgeStyle = 'bg-[#fee2e2] text-[#991b1b]';
+                      } else if (statusText === 'Pending') {
+                        badgeStyle = 'bg-[#fef3c7] text-[#92400e]';
+                      }
+
                       return (
                         <React.Fragment key={o.order_id}>
                           <tr
@@ -3314,11 +3314,13 @@ function AccountView({
                             className="hover:bg-[#e8e8e1]/60 cursor-pointer transition-colors"
                           >
                             <td className="p-3 font-black">#{o.order_id}</td>
-                            <td className="p-3 text-[#14212b]/60">{o.order_date}</td>
+                            <td className="p-3 text-[#14212b]/60 whitespace-nowrap">
+                              {o.order_date ? o.order_date.split(' ')[0] : 'Recent'}
+                            </td>
                             <td className="p-3 font-black">{money(o.total_amount)}</td>
                             <td className="p-3">
-                              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase bg-[#d1fae5] text-[#065f46]">
-                                {o.order_status}
+                              <span className={`inline-block px-2 py-0.5 text-[9px] font-black uppercase rounded-xs ${badgeStyle}`}>
+                                {statusText}
                               </span>
                             </td>
                             <td className="p-3 text-right text-[#9a4e2c] font-bold text-[11px]">
