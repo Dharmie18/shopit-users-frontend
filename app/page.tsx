@@ -40,13 +40,14 @@ import {
   Share2,
   CheckCheck,
   Ticket,
-  Sparkles,
   Clock,
   Timer,
   Eye,
   EyeOff,
   KeyRound,
   ArrowLeft,
+  CreditCard,
+  Lock,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
@@ -126,14 +127,81 @@ export default function Page() {
 
   // Checkout State
   const [checkoutForm, setCheckoutForm] = useState({ shipping_address: '', payment_method: 'Bank Transfer' });
+  const [cardForm, setCardForm] = useState({ card_number: '', expiry: '', cvv: '', cardholder_name: '' });
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [lastOrderResult, setLastOrderResult] = useState<{ order_id: string | number; total_amount: number | string } | null>(null);
+
+  // Dynamic Virtual Account State for Bank Transfer
+  const [virtualAccount, setVirtualAccount] = useState<{
+    bank_name: string;
+    account_number: string;
+    account_name: string;
+    amount: number;
+    reference: string;
+    expires_in_minutes: number;
+    expires_at: string;
+  } | null>(null);
+  const [virtualAccountLoading, setVirtualAccountLoading] = useState(false);
+  const [virtualAccountError, setVirtualAccountError] = useState('');
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferSuccessData, setTransferSuccessData] = useState<{
+    order_id: string | number;
+    total_amount: number | string;
+    reference?: string;
+    bank_name?: string;
+    account_number?: string;
+  } | null>(null);
 
   // Newsletter State
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const [newsletterLoading, setNewsletterLoading] = useState(false);
   const [newsletterMsg, setNewsletterMsg] = useState('');
+
+  // History-aware Navigation Function
+  function navigateTo(newView: View, extraParams?: Record<string, string | number>, replace = false) {
+    setView(newView);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', newView);
+      if (extraParams) {
+        Object.entries(extraParams).forEach(([k, v]) => {
+          url.searchParams.set(k, String(v));
+        });
+      }
+      if (newView !== 'product') {
+        url.searchParams.delete('id');
+      }
+      if (replace) {
+        window.history.replaceState({ view: newView, ...extraParams }, '', url.toString());
+      } else {
+        window.history.pushState({ view: newView, ...extraParams }, '', url.toString());
+      }
+    }
+  }
+
+  // Listen for browser Back/Forward navigation (popstate)
+  useEffect(() => {
+    function handlePopState(e: PopStateEvent) {
+      const params = new URLSearchParams(window.location.search);
+      const urlView = (params.get('view') || e.state?.view || 'home') as View;
+      const validViews: View[] = ['home', 'shop', 'product', 'checkout', 'confirmation', 'account', 'about'];
+      if (validViews.includes(urlView)) {
+        setView(urlView);
+      } else {
+        setView('home');
+      }
+
+      const prodId = params.get('id');
+      if (prodId && products.length > 0) {
+        const found = products.find((p) => String(p.product_id) === String(prodId));
+        if (found) setSelectedProduct(found);
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
 
   useEffect(() => {
     loadInitialData();
@@ -155,8 +223,14 @@ export default function Page() {
       }
       setCartLoaded(true);
 
-      // Check for referral code or magic email verification token in query params
+      // Check initial view from URL
       const params = new URLSearchParams(window.location.search);
+      const urlView = params.get('view') as View;
+      if (urlView && ['home', 'shop', 'product', 'checkout', 'confirmation', 'account', 'about'].includes(urlView)) {
+        setView(urlView);
+      }
+
+      // Check for referral code in query params: ?ref=CODE
       const ref = params.get('ref');
       if (ref) {
         const cleanRef = ref.trim().toUpperCase();
@@ -166,6 +240,8 @@ export default function Page() {
           // localStorage disabled fallback
         }
         setAuthForm((prev) => ({ ...prev, referral_code: cleanRef }));
+        setAccountMode('register');
+        setView('account');
         notify(`Referral code ${cleanRef} applied! Create an account to receive 20% OFF.`);
       } else {
         try {
@@ -178,7 +254,7 @@ export default function Page() {
         }
       }
 
-      // Check for magic email verification link ?verify_token=...
+      // Check for email verification link ?verify_token=...
       const verifyToken = params.get('verify_token') || params.get('token');
       if (verifyToken) {
         apiRequest('/api/users/verify-email.php', 'POST', { token: verifyToken })
@@ -200,7 +276,7 @@ export default function Page() {
                 role: res.role,
                 is_verified: true,
               });
-              notify('🎉 Email verified successfully! Welcome to ShopIt.');
+              notify('🎉 Email verified successfully! Welcome to your ShopIt Account Dashboard.');
               setView('account');
               loadUserProfile();
               loadUserOrders();
@@ -209,12 +285,12 @@ export default function Page() {
             }
           })
           .catch((err: any) => {
-            notify(err.message || 'Verification link is invalid or already activated.');
+            notify(err.message || 'Verification link is invalid, expired, or already activated.');
           })
           .finally(() => {
-            // Remove token from browser address bar
-            const newUrl = window.location.pathname;
-            window.history.replaceState({}, '', newUrl);
+            // Remove token from browser address bar while maintaining clean URL
+            const newUrl = window.location.pathname + '?view=account';
+            window.history.replaceState({ view: 'account' }, '', newUrl);
           });
       }
     }
@@ -224,7 +300,7 @@ export default function Page() {
       loadUserProfile();
       loadUserOrders();
       loadReferralData();
-      loadUserCart(savedLocalCart);
+      loadUserCart();
     }
   }, []);
 
@@ -409,7 +485,7 @@ export default function Page() {
 
   function openProduct(p: Product) {
     setSelectedProduct(p);
-    setView('product');
+    navigateTo('product', { id: p.product_id });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -508,7 +584,7 @@ export default function Page() {
           password: authForm.password,
           referral_code: authForm.referral_code || undefined,
         });
-        notify(res.message || 'Account created! A magic verification link has been sent to your email.');
+        notify(res.message || 'Account created! A verification link has been sent to your email.');
         setAuthForm((prev) => ({ ...prev, email: registeredEmail, password: '' }));
         try {
           localStorage.removeItem('shopit_ref_code');
@@ -588,15 +664,41 @@ export default function Page() {
       // ignore
     }
     setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
+    navigateTo('home');
     notify('Logged out successfully.');
   }
+
+  async function fetchVirtualAccount(amount: number) {
+    if (!isAuthenticated()) return;
+    setVirtualAccountLoading(true);
+    setVirtualAccountError('');
+    try {
+      const res = await apiRequest('/api/checkout/virtual-account.php', 'POST', { amount }, true);
+      if (res && res.account_number) {
+        setVirtualAccount(res);
+      } else {
+        setVirtualAccountError(res?.error || 'Failed to generate dynamic virtual bank account.');
+      }
+    } catch (err: any) {
+      setVirtualAccountError(err.message || 'Unable to connect to dynamic virtual account engine.');
+    } finally {
+      setVirtualAccountLoading(false);
+    }
+  }
+
+  // Automatically generate dynamic virtual account on Bank Transfer selection or total change
+  useEffect(() => {
+    if (view === 'checkout' && checkoutForm.payment_method === 'Bank Transfer' && isAuthenticated() && grandTotal > 0) {
+      fetchVirtualAccount(grandTotal);
+    }
+  }, [view, checkoutForm.payment_method, grandTotal]);
 
   async function handleCheckout(e: React.FormEvent) {
     e.preventDefault();
     setCheckoutError('');
 
     if (!isAuthenticated()) {
-      setView('account');
+      navigateTo('account');
       setAccountMode('login');
       setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
       notify('Please sign in or create an account to complete checkout.');
@@ -606,6 +708,27 @@ export default function Page() {
     if (cart.length === 0) {
       setCheckoutError('Your cart is empty.');
       return;
+    }
+
+    // If card payment is selected, validate card fields
+    if (checkoutForm.payment_method === 'Debit Card' || checkoutForm.payment_method === 'Credit Card') {
+      const cleanCardNum = cardForm.card_number.replace(/\s+/g, '');
+      if (cleanCardNum.length < 16) {
+        setCheckoutError('Please enter a valid 16-digit debit/credit card number.');
+        return;
+      }
+      if (!/^\d{2}\/\d{2}$/.test(cardForm.expiry.trim())) {
+        setCheckoutError('Please enter a valid card expiry date in MM/YY format.');
+        return;
+      }
+      if (cardForm.cvv.trim().length < 3) {
+        setCheckoutError('Please enter a valid 3-digit CVV security code.');
+        return;
+      }
+      if (!cardForm.cardholder_name.trim()) {
+        setCheckoutError('Please enter the name on the card.');
+        return;
+      }
     }
 
     setCheckoutLoading(true);
@@ -656,6 +779,17 @@ export default function Page() {
         }).catch(() => {});
       }
 
+      const isBankTransfer = checkoutForm.payment_method === 'Bank Transfer';
+      const capturedTransferData = isBankTransfer
+        ? {
+            order_id: finalOrderId,
+            total_amount: finalOrderTotal,
+            reference: virtualAccount?.reference,
+            bank_name: virtualAccount?.bank_name,
+            account_number: virtualAccount?.account_number,
+          }
+        : null;
+
       setCart([]);
       try {
         localStorage.removeItem('shopit_cart');
@@ -664,10 +798,18 @@ export default function Page() {
       }
       setAppliedCoupon(null);
       setCouponInput('');
+      setCardForm({ card_number: '', expiry: '', cvv: '', cardholder_name: '' });
       loadUserOrders();
       loadReferralData();
-      setView('confirmation');
-      notify('Order placed successfully!');
+
+      if (isBankTransfer && capturedTransferData) {
+        setTransferSuccessData(capturedTransferData);
+        setTransferModalOpen(true);
+        navigateTo('confirmation');
+      } else {
+        navigateTo('confirmation');
+        notify('Order placed successfully!');
+      }
     } catch (err: any) {
       setCheckoutError(err.message || 'Checkout failed.');
     } finally {
@@ -729,7 +871,7 @@ export default function Page() {
               </button>
 
               <button
-                onClick={() => { setView('home'); setMobileMenuOpen(false); }}
+                onClick={() => { navigateTo('home'); setMobileMenuOpen(false); }}
                 className="flex items-center gap-2 text-xl font-black tracking-[-0.08em] cursor-pointer"
               >
                 <span className="grid size-7 place-items-center bg-[#14212b] text-sm text-[#e0ee56] font-black">S</span>
@@ -738,19 +880,19 @@ export default function Page() {
 
               <nav className="hidden items-center gap-6 text-xs font-bold uppercase tracking-[0.13em] md:flex ml-2">
                 <button
-                  onClick={() => { setView('home'); setSelectedCategory(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  onClick={() => { setSelectedCategory(null); navigateTo('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                   className={view === 'home' ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
                 >
                   Home
                 </button>
                 <button
-                  onClick={() => { setView('shop'); setSelectedCategory(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  onClick={() => { setSelectedCategory(null); navigateTo('shop'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                   className={view === 'shop' && selectedCategory === null ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
                 >
                   All Products
                 </button>
                 <button
-                  onClick={() => { setView('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  onClick={() => { navigateTo('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                   className={view === 'about' ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
                 >
                   About ShopIt
@@ -774,7 +916,7 @@ export default function Page() {
             {/* Actions */}
             <div className="flex items-center gap-2 sm:gap-4">
               <button
-                onClick={() => { setView('account'); setMobileMenuOpen(false); }}
+                onClick={() => { navigateTo('account'); setMobileMenuOpen(false); }}
                 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.12em] hover:text-[#9a4e2c] cursor-pointer p-1"
               >
                 <CircleUserRound className="size-4.5" />
@@ -813,25 +955,25 @@ export default function Page() {
               </div>}
               <div className="flex flex-col gap-2 text-xs font-black uppercase tracking-[0.14em]">
                 <button
-                  onClick={() => { setView('shop'); setSelectedCategory(null); setMobileMenuOpen(false); }}
+                  onClick={() => { setSelectedCategory(null); navigateTo('shop'); setMobileMenuOpen(false); }}
                   className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
                 >
                   All Products
                 </button>
                 <button
-                  onClick={() => { setView('about'); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  onClick={() => { navigateTo('about'); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                   className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer text-[#9a4e2c]"
                 >
                   About ShopIt
                 </button>
                 <button
-                  onClick={() => { setView('home'); setMobileMenuOpen(false); }}
+                  onClick={() => { navigateTo('home'); setMobileMenuOpen(false); }}
                   className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
                 >
                   Home & Categories
                 </button>
                 <button
-                  onClick={() => { setView('account'); setMobileMenuOpen(false); }}
+                  onClick={() => { navigateTo('account'); setMobileMenuOpen(false); }}
                   className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
                 >
                   My Account & Orders
@@ -853,12 +995,12 @@ export default function Page() {
               onRetryProducts={loadProducts}
               onBrowseCategory={(catId) => {
                 setSelectedCategory(catId);
-                setView('shop');
+                navigateTo('shop');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onBrowseAll={() => {
                 setSelectedCategory(null);
-                setView('shop');
+                navigateTo('shop');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onProduct={openProduct}
@@ -892,7 +1034,7 @@ export default function Page() {
             selectedProduct ? (
               <ProductDetailView
                 product={selectedProduct}
-                onBack={() => setView('shop')}
+                onBack={() => navigateTo('shop')}
                 onAddToCart={addToCart}
               />
             ) : (
@@ -901,7 +1043,7 @@ export default function Page() {
                 <h3 className="font-black text-base uppercase">Product Not Selected</h3>
                 <p className="mt-1 text-xs text-[#14212b]/60">Please choose a product from the catalog.</p>
                 <button
-                  onClick={() => setView('shop')}
+                  onClick={() => navigateTo('shop')}
                   className="mt-5 bg-[#14212b] text-[#e0ee56] px-5 py-2.5 text-xs font-black uppercase tracking-wider cursor-pointer hover:bg-[#1f3342]"
                 >
                   Return to Catalog
@@ -917,10 +1059,12 @@ export default function Page() {
               tax={tax}
               form={checkoutForm}
               setForm={setCheckoutForm}
+              cardForm={cardForm}
+              setCardForm={setCardForm}
               onSubmit={handleCheckout}
               loading={checkoutLoading}
               error={checkoutError}
-              onBack={() => setView('shop')}
+              onBack={() => navigateTo('shop')}
               appliedCoupon={appliedCoupon}
               couponInput={couponInput}
               setCouponInput={setCouponInput}
@@ -933,14 +1077,18 @@ export default function Page() {
               isCouponEligible={isCouponEligible}
               discountAmount={discountAmount}
               grandTotal={grandTotal}
+              virtualAccount={virtualAccount}
+              virtualAccountLoading={virtualAccountLoading}
+              virtualAccountError={virtualAccountError}
+              onRefreshVirtualAccount={() => fetchVirtualAccount(grandTotal)}
             />
           )}
 
           {view === 'confirmation' && lastOrderResult && (
             <OrderConfirmationView
               orderResult={lastOrderResult}
-              onContinueShopping={() => { setView('shop'); setSelectedCategory(null); }}
-              onViewAccount={() => setView('account')}
+              onContinueShopping={() => { setSelectedCategory(null); navigateTo('shop'); }}
+              onViewAccount={() => navigateTo('account')}
             />
           )}
 
@@ -973,12 +1121,12 @@ export default function Page() {
             <AboutView
               stats={stats}
               onBrowseProducts={() => {
-                setView('shop');
                 setSelectedCategory(null);
+                navigateTo('shop');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onBrowseCategories={() => {
-                setView('home');
+                navigateTo('home');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
@@ -1012,7 +1160,7 @@ export default function Page() {
                     Browse our products and add items in Nigerian Naira (₦).
                   </p>
                   <button
-                    onClick={() => { setCartOpen(false); setView('shop'); }}
+                    onClick={() => { setCartOpen(false); navigateTo('shop'); }}
                     className="mt-6 bg-[#14212b] text-[#e0ee56] px-5 py-2.5 text-xs font-black uppercase tracking-wider cursor-pointer"
                   >
                     Start Shopping
@@ -1086,7 +1234,7 @@ export default function Page() {
                 <button
                   onClick={() => {
                     setCartOpen(false);
-                    setView('checkout');
+                    navigateTo('checkout');
                   }}
                   className="w-full mt-2 bg-[#14212b] text-[#e0ee56] py-3.5 text-xs font-black uppercase tracking-[.15em] flex items-center justify-center gap-2 hover:bg-[#14212b]/90 cursor-pointer shadow-lg"
                 >
@@ -1126,7 +1274,7 @@ export default function Page() {
                 {categories.slice(0, 5).map((cat) => (
                   <li key={cat.category_id}>
                     <button
-                      onClick={() => { setSelectedCategory(cat.category_id); setView('shop'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                      onClick={() => { setSelectedCategory(cat.category_id); navigateTo('shop'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                       className="hover:text-[#e0ee56] transition-colors cursor-pointer text-left"
                     >
                       {cat.category_name}
@@ -1140,9 +1288,9 @@ export default function Page() {
             <div className="lg:col-span-2 space-y-3">
               <p className="text-xs font-black uppercase tracking-[0.16em] text-[#e0ee56]">Customer Service</p>
               <ul className="space-y-2 text-xs text-white/70">
-                <li><button onClick={() => setView('account')} className="hover:text-[#e0ee56] cursor-pointer">My Account</button></li>
-                <li><button onClick={() => { setView('shop'); setSelectedCategory(null); }} className="hover:text-[#e0ee56] cursor-pointer">Catalog Inventory</button></li>
-                <li><button onClick={() => { setView('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-[#e0ee56] cursor-pointer">About ShopIt</button></li>
+                <li><button onClick={() => navigateTo('account')} className="hover:text-[#e0ee56] cursor-pointer">My Account</button></li>
+                <li><button onClick={() => { setSelectedCategory(null); navigateTo('shop'); }} className="hover:text-[#e0ee56] cursor-pointer">Catalog Inventory</button></li>
+                <li><button onClick={() => { navigateTo('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-[#e0ee56] cursor-pointer">About ShopIt</button></li>
                 <li><span className="text-white/40">Delivery & Returns</span></li>
                 <li><span className="text-white/40">Privacy Policy</span></li>
               </ul>
@@ -1197,6 +1345,23 @@ export default function Page() {
           ? <ArrowDown className="size-5 text-[#e0ee56] group-hover:translate-y-0.5 transition-transform" />
           : <ArrowUp className="size-5 text-[#e0ee56] group-hover:-translate-y-0.5 transition-transform" />}
       </button>
+
+      {/* Dynamic Bank Transfer Success Modal */}
+      {transferModalOpen && transferSuccessData && (
+        <TransferSuccessModal
+          data={transferSuccessData}
+          onClose={() => setTransferModalOpen(false)}
+          onViewOrders={() => {
+            setTransferModalOpen(false);
+            navigateTo('account');
+          }}
+          onContinueShopping={() => {
+            setTransferModalOpen(false);
+            setSelectedCategory(null);
+            navigateTo('shop');
+          }}
+        />
+      )}
 
       {/* Toast Notification */}
       {toast && (
@@ -1925,6 +2090,8 @@ function CheckoutView({
   tax,
   form,
   setForm,
+  cardForm,
+  setCardForm,
   onSubmit,
   loading,
   error,
@@ -1941,12 +2108,18 @@ function CheckoutView({
   isCouponEligible,
   discountAmount,
   grandTotal,
+  virtualAccount,
+  virtualAccountLoading,
+  virtualAccountError,
+  onRefreshVirtualAccount,
 }: {
   cart: CartLine[];
   subtotal: number;
   tax: number;
   form: { shipping_address: string; payment_method: string };
   setForm: React.Dispatch<React.SetStateAction<{ shipping_address: string; payment_method: string }>>;
+  cardForm: { card_number: string; expiry: string; cvv: string; cardholder_name: string };
+  setCardForm: React.Dispatch<React.SetStateAction<{ card_number: string; expiry: string; cvv: string; cardholder_name: string }>>;
   onSubmit: (e: React.FormEvent) => void;
   loading: boolean;
   error: string;
@@ -1963,7 +2136,52 @@ function CheckoutView({
   isCouponEligible: boolean;
   discountAmount: number;
   grandTotal: number;
+  virtualAccount: {
+    bank_name: string;
+    account_number: string;
+    account_name: string;
+    amount: number;
+    reference: string;
+    expires_in_minutes: number;
+    expires_at: string;
+  } | null;
+  virtualAccountLoading: boolean;
+  virtualAccountError: string;
+  onRefreshVirtualAccount: () => void;
 }) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  function copyToClipboard(text: string, fieldKey: string) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedField(fieldKey);
+      setTimeout(() => setCopiedField(null), 2500);
+    }
+  }
+
+  function formatCardNumber(value: string) {
+    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
+    const matches = v.match(/\d{4,16}/g);
+    const match = (matches && matches[0]) || '';
+    const parts = [];
+    for (let i = 0, len = match.length; i += 4, i < len;) {
+      // no-op loop safeguard
+    }
+    const chunks = [];
+    for (let i = 0; i < match.length; i += 4) {
+      chunks.push(match.substring(i, i + 4));
+    }
+    return chunks.length ? chunks.join(' ') : v;
+  }
+
+  function formatExpiry(value: string) {
+    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
+    if (v.length >= 2) {
+      return `${v.slice(0, 2)}/${v.slice(2, 4)}`;
+    }
+    return v;
+  }
+
   return (
     <section className="mx-auto max-w-[1440px] px-3 sm:px-5 py-8 md:py-14">
       <button
@@ -2007,7 +2225,7 @@ function CheckoutView({
 
             <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-5 sm:p-6">
               <h3 className="font-black uppercase tracking-tight text-base mb-4">2. Payment Method (NGN)</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                 {['Bank Transfer', 'Debit Card', 'Corporate Invoice'].map((method) => (
                   <button
                     key={method}
@@ -2024,6 +2242,231 @@ function CheckoutView({
                   </button>
                 ))}
               </div>
+
+              {/* Dynamic Bank Transfer Virtual Account Details */}
+              {form.payment_method === 'Bank Transfer' && (
+                <div className="mt-4 border-t border-[#14212b]/15 pt-4 bg-[#f5f5f1] p-4 sm:p-5 border border-[#14212b]/20 space-y-4 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#14212b]/10">
+                    <span className="text-xs font-black uppercase tracking-wider text-[#14212b] flex items-center gap-1.5">
+                      <Building2 className="size-4 text-[#9a4e2c]" /> Generated Virtual Transfer Account
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded flex items-center gap-1">
+                      <Timer className="size-3" /> Valid for 30 Mins
+                    </span>
+                  </div>
+
+                  {virtualAccountLoading ? (
+                    <div className="p-8 text-center space-y-2 bg-[#e8e8e1]/60 border border-[#14212b]/10">
+                      <Loader2 className="size-6 animate-spin mx-auto text-[#14212b]" />
+                      <p className="text-xs font-black uppercase tracking-wider text-[#14212b]">
+                        Generating Dynamic Virtual Account...
+                      </p>
+                      <p className="text-[11px] text-[#14212b]/60">
+                        Assigning settlement bank node and unique payment reference...
+                      </p>
+                    </div>
+                  ) : virtualAccountError ? (
+                    <div className="p-4 bg-red-50 border border-red-300 text-red-900 text-xs space-y-3">
+                      <p className="font-bold">{virtualAccountError}</p>
+                      <button
+                        type="button"
+                        onClick={onRefreshVirtualAccount}
+                        className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider bg-[#14212b] text-[#e0ee56] px-3.5 py-1.5 cursor-pointer hover:bg-[#1f3342]"
+                      >
+                        <RefreshCw className="size-3" /> Retry Generation
+                      </button>
+                    </div>
+                  ) : virtualAccount ? (
+                    <div className="space-y-3.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Bank Partner */}
+                        <div className="p-3 bg-white border border-[#14212b]/15">
+                          <span className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">
+                            Bank Name
+                          </span>
+                          <span className="font-mono font-black text-sm text-[#14212b] mt-0.5 block">
+                            {virtualAccount.bank_name}
+                          </span>
+                        </div>
+
+                        {/* Beneficiary */}
+                        <div className="p-3 bg-white border border-[#14212b]/15">
+                          <span className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">
+                            Beneficiary / Account Name
+                          </span>
+                          <span className="font-bold text-xs text-[#14212b] mt-0.5 block truncate">
+                            {virtualAccount.account_name}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 10-Digit Account Number with 1-Click Copy */}
+                      <div className="p-3.5 bg-white border-2 border-[#14212b] flex items-center justify-between gap-3">
+                        <div>
+                          <span className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">
+                            10-Digit Virtual Account Number
+                          </span>
+                          <span className="font-mono font-black text-lg sm:text-2xl tracking-wider text-[#14212b]">
+                            {virtualAccount.account_number}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(virtualAccount.account_number, 'account')}
+                          className={
+                            'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-black uppercase tracking-wider transition-colors cursor-pointer shrink-0 ' +
+                            (copiedField === 'account'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-[#14212b] text-[#e0ee56] hover:bg-[#1f3342]')
+                          }
+                        >
+                          {copiedField === 'account' ? (
+                            <>
+                              <Check className="size-3.5" /> Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="size-3.5" /> Copy Account
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Amount with Copy */}
+                        <div className="p-3 bg-white border border-[#14212b]/15 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">
+                              Exact Amount to Pay
+                            </span>
+                            <span className="font-mono font-black text-sm text-[#14212b]">
+                              {money(grandTotal)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(String(grandTotal), 'amount')}
+                            className="text-xs font-bold text-[#14212b]/70 hover:text-[#14212b] flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedField === 'amount' ? (
+                              <span className="text-emerald-700 font-black">Copied</span>
+                            ) : (
+                              <>
+                                <Copy className="size-3" /> Copy
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Reference with Copy */}
+                        <div className="p-3 bg-white border border-[#14212b]/15 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">
+                              Transfer Reference
+                            </span>
+                            <span className="font-mono font-bold text-xs text-[#9a4e2c]">
+                              {virtualAccount.reference}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(virtualAccount.reference, 'ref')}
+                            className="text-xs font-bold text-[#14212b]/70 hover:text-[#14212b] flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedField === 'ref' ? (
+                              <span className="text-emerald-700 font-black">Copied</span>
+                            ) : (
+                              <>
+                                <Copy className="size-3" /> Copy
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-[#14212b]/80 leading-relaxed bg-[#e8e8e1]/80 p-3 border border-[#14212b]/10">
+                        <p>
+                          <strong>Instructions:</strong> Open your banking app, internet banking, or bank USSD menu, and transfer the exact amount of <strong>{money(grandTotal)}</strong> to the virtual account details above. Once the transfer is completed, click <strong>"I Have Transferred the Money"</strong> below to veify your order.
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {/* Card Details Input Section if Debit Card or Credit Card is selected */}
+              {(form.payment_method === 'Debit Card' || form.payment_method === 'Credit Card') && (
+                <div className="mt-4 border-t border-[#14212b]/15 pt-4 bg-[#f5f5f1] p-4 border border-[#14212b]/20 space-y-3 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#14212b]/10">
+                    <span className="text-xs font-black uppercase tracking-wider text-[#14212b] flex items-center gap-1.5">
+                      <CreditCard className="size-4 text-[#9a4e2c]" /> Enter Card Information
+                    </span>
+                    <span className="text-[10px] font-bold text-[#14212b]/60 flex items-center gap-1">
+                      <Lock className="size-3 text-emerald-600" /> 256-Bit Encrypted
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                      Cardholder Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={cardForm.cardholder_name}
+                      onChange={(e) => setCardForm({ ...cardForm, cardholder_name: e.target.value })}
+                      placeholder="e.g. OLUWASEUN ADEYEMI"
+                      className="w-full border border-[#14212b]/20 bg-white p-2.5 text-xs font-bold outline-none focus:border-[#9a4e2c] uppercase"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                      Card Number (16 Digits)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={19}
+                      value={cardForm.card_number}
+                      onChange={(e) => setCardForm({ ...cardForm, card_number: formatCardNumber(e.target.value) })}
+                      placeholder="0000 0000 0000 0000"
+                      className="w-full border border-[#14212b]/20 bg-white p-2.5 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                        Expiry (MM/YY)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={5}
+                        value={cardForm.expiry}
+                        onChange={(e) => setCardForm({ ...cardForm, expiry: formatExpiry(e.target.value) })}
+                        placeholder="MM/YY"
+                        className="w-full border border-[#14212b]/20 bg-white p-2.5 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-wider text-[#14212b]/70 mb-1">
+                        CVV / CVC (3 Digits)
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        maxLength={4}
+                        value={cardForm.cvv}
+                        onChange={(e) => setCardForm({ ...cardForm, cvv: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+                        placeholder="•••"
+                        className="w-full border border-[#14212b]/20 bg-white p-2.5 text-xs font-mono font-bold outline-none focus:border-[#9a4e2c]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Coupon & Referral Rewards Redemption */}
@@ -2154,6 +2597,8 @@ function CheckoutView({
                   <Loader2 className="size-4 animate-spin" />
                   <span>Processing Order...</span>
                 </>
+              ) : form.payment_method === 'Bank Transfer' ? (
+                `I Have Transferred the Money (${money(grandTotal)})`
               ) : (
                 'Place Order (₦)'
               )}
@@ -2206,6 +2651,97 @@ function CheckoutView({
         </div>
       </div>
     </section>
+  );
+}
+
+function TransferSuccessModal({
+  data,
+  onClose,
+  onViewOrders,
+  onContinueShopping,
+}: {
+  data: {
+    order_id: string | number;
+    total_amount: number | string;
+    reference?: string;
+    bank_name?: string;
+    account_number?: string;
+  };
+  onClose: () => void;
+  onViewOrders: () => void;
+  onContinueShopping: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#14212b]/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+      <div className="relative w-full max-w-lg bg-[#f5f5f1] border-2 border-[#14212b] p-6 sm:p-8 text-[#14212b] shadow-2xl animate-in zoom-in-95 duration-200">
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 grid size-8 place-items-center border border-[#14212b]/20 hover:bg-[#14212b] hover:text-[#e0ee56] transition-colors cursor-pointer"
+          aria-label="Close"
+        >
+          <X className="size-4" />
+        </button>
+
+        <div className="text-center">
+          <div className="size-16 bg-emerald-600 text-white grid place-items-center mx-auto rounded-full mb-4 shadow-lg ring-4 ring-emerald-100">
+            <Check className="size-8 stroke-[3]" />
+          </div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Payment Notification Logged</p>
+          <h2 className="mt-1 text-2xl sm:text-3xl font-black uppercase tracking-tight">Transfer Confirmed!</h2>
+          <p className="mt-2 text-xs text-[#14212b]/75 leading-relaxed">
+            Thank you! Your bank transfer notification has been submitted to our automated settlement engine for order verification.
+          </p>
+        </div>
+
+        <div className="my-6 border border-[#14212b]/15 bg-[#e8e8e1] p-4 sm:p-5 space-y-3 text-xs">
+          <div className="flex justify-between items-center pb-2.5 border-b border-[#14212b]/10">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">Order Reference</span>
+            <span className="font-mono font-black text-sm text-[#14212b]">#{data.order_id}</span>
+          </div>
+
+          {data.reference && (
+            <div className="flex justify-between items-center pb-2.5 border-b border-[#14212b]/10">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">Payment Reference</span>
+              <span className="font-mono font-bold text-xs text-[#9a4e2c]">{data.reference}</span>
+            </div>
+          )}
+
+          {data.bank_name && (
+            <div className="flex justify-between items-center pb-2.5 border-b border-[#14212b]/10">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">Settlement Partner</span>
+              <span className="font-bold text-xs">{data.bank_name}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between items-center pt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60">Amount Transferred</span>
+            <span className="font-mono font-black text-base text-[#14212b]">{money(data.total_amount)}</span>
+          </div>
+        </div>
+
+        <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs mb-6 flex items-start gap-2.5">
+          <ShieldCheck className="size-4 text-emerald-700 shrink-0 mt-0.5" />
+          <p className="text-[11px] leading-relaxed">
+            Automated reconciliation completes in under 2 minutes. Once verified, your official receipt and order tracking will be updated in your account.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            onClick={onViewOrders}
+            className="w-full bg-[#14212b] text-[#e0ee56] py-3.5 px-4 text-xs font-black uppercase tracking-wider hover:bg-[#1f3342] transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            <Package className="size-4" /> Track in Account
+          </button>
+          <button
+            onClick={onContinueShopping}
+            className="w-full border border-[#14212b]/25 bg-white py-3.5 px-4 text-xs font-black uppercase tracking-wider hover:bg-[#e8e8e1] transition-colors cursor-pointer"
+          >
+            Continue Shopping
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2392,7 +2928,7 @@ function AccountView({
     try {
       const targetEmail = form.email || forgotEmail;
       const res = await apiRequest('/api/users/resend-verification.php', 'POST', { email: targetEmail });
-      setResendNotice(res.message || 'New magic verification link sent to your email.');
+      setResendNotice(res.message || 'New verification link sent to your email.');
       setVerifyCooldown(30);
       onNotify('Verification link sent! Check your inbox.');
     } catch (err: any) {
@@ -2415,6 +2951,20 @@ function AccountView({
       setForgotSuccess(res.message || 'Verification code sent to your email.');
       setForgotCooldown(30);
       setForgotMode('otp');
+
+      // Dual-layer frontend Nodemailer OTP trigger
+      if (res.debug_code) {
+        fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'reset_otp',
+            to: forgotEmail,
+            name: res.first_name || 'Customer',
+            otp: res.debug_code,
+          }),
+        }).catch(() => {});
+      }
     } catch (err: any) {
       setForgotError(err.message || 'Unable to send password reset code.');
     } finally {
@@ -2463,6 +3013,18 @@ function AccountView({
         code: forgotOtp.trim(),
         new_password: resetPassword,
       });
+
+      // Dual-layer frontend Nodemailer password changed trigger
+      fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'password_changed',
+          to: forgotEmail,
+          name: res.first_name || 'Customer',
+          time: new Date().toLocaleString(),
+        }),
+      }).catch(() => {});
 
       onNotify(res.message || 'Password updated successfully! Please sign in.');
       setForgotMode('none');
@@ -2857,7 +3419,7 @@ function AccountView({
           </div>
         )}
 
-        {/* --- 1. MAGIC LINK VERIFICATION NOTICE VIEW --- */}
+        {/* --- 1. VERIFICATION LINK NOTICE VIEW --- */}
         {mode === 'verify_notice' && (
           <div className="flex flex-col items-center text-center gap-4 py-2">
             <div className="size-14 rounded-full bg-[#14212b] grid place-items-center text-[#e0ee56] shadow-lg mb-1">
@@ -2866,10 +3428,10 @@ function AccountView({
 
             <div>
               <h2 className="text-xl font-black uppercase tracking-tight text-[#14212b]">
-                Magic Link Sent!
+                Verification Link Sent!
               </h2>
               <p className="mt-1 text-xs text-[#14212b]/70 max-w-xs mx-auto leading-relaxed">
-                We've sent a magic activation link to:
+                We've sent a verification link to:
               </p>
               <div className="mt-2 bg-[#f5f5f1] border border-[#14212b]/20 px-3 py-2 text-xs font-mono font-bold text-[#14212b]">
                 {form.email}
@@ -2877,8 +3439,8 @@ function AccountView({
             </div>
 
             <div className="bg-[#f5f5f1] border border-[#14212b]/15 p-4 text-left text-xs text-[#14212b]/80 space-y-1.5 w-full">
-              <p className="font-bold text-[#14212b] flex items-center gap-1.5">
-                <Sparkles className="size-3.5 text-[#9a4e2c]" /> How it works:
+              <p className="font-bold text-[#14212b]">
+                How it works:
               </p>
               <p>1. Open the email in your inbox from <strong>ShopIt Commerce</strong>.</p>
               <p>2. Click the <strong>"Verify & Activate Account"</strong> button.</p>

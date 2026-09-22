@@ -22,9 +22,11 @@ yarn-error.log*
 pnpm-debug.log*
 
 # local env files
-.env*.local
 .env
-.env*.example
+.env*
+.env*.local
+.env.local
+.env.*.local
 
 # vercel
 .vercel
@@ -33,9 +35,5 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# agent and ai docs
-AGENTS.md
-CLAUDE.md
-agents.md
-claude.md
+
 

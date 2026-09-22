@@ -56,9 +56,10 @@ export async function sendMagicLinkVerification({ to, name, token, frontendUrl }
       <tr>
         <td style="padding: 40px;">
           <h2 style="font-size: 20px; font-weight: 800; margin: 0 0 15px 0; color: #14212b;">Welcome, ${displayName}!</h2>
-          <p style="font-size: 14px; line-height: 1.6; color: #14212b99; margin: 0 0 25px 0;">
+          <p style="font-size: 14px; line-height: 1.6; color: #14212b99; margin: 0 0 15px 0;">
             Thank you for creating an account on ShopIt. To complete your registration and securely activate your account, please click the button below:
           </p>
+          <p style="font-size: 12px; color: #9a4e2c; font-weight: bold; margin: 0 0 25px 0;">* Note: This verification link expires in 30 minutes for your security.</p>
           <div style="text-align: center; margin: 35px 0;">
             <a href="${verifyLink}" style="background-color: #14212b; color: #e0ee56; padding: 14px 32px; font-size: 13px; font-weight: 900; text-decoration: none; text-transform: uppercase; letter-spacing: 1px; display: inline-block; border-radius: 0px;">
               Verify & Activate Account &rarr;
@@ -72,7 +73,7 @@ export async function sendMagicLinkVerification({ to, name, token, frontendUrl }
       </tr>
       <tr>
         <td style="padding: 20px 40px; background-color: #f5f5f1; border-top: 1px solid #14212b10; text-align: center; font-size: 11px; color: #14212b60;">
-          &copy; ${new Date().getFullYear()} ShopIt Commerce. If you did not create this account, please disregard this email.
+          &copy; ${new Date().getFullYear()} ShopIt Commerce. This verification link is valid for 30 minutes. If you did not create this account, please disregard this email.
         </td>
       </tr>
     </table>
@@ -83,10 +84,13 @@ export async function sendMagicLinkVerification({ to, name, token, frontendUrl }
   return transporter.sendMail({
     from: `"${fromName}" <${fromEmail}>`,
     to,
-    subject: 'Activate Your ShopIt Account - Magic Link',
+    subject: 'Activate Your ShopIt Account - Verification Link',
     html,
   });
 }
+
+export const sendVerificationEmail = sendMagicLinkVerification;
+
 
 export async function sendPasswordResetOtp({ to, name, otp }: EmailOptions) {
   const transporter = getTransporter();
