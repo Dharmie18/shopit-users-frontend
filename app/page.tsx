@@ -51,9 +51,12 @@ import {
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
-import { Product, Category, Order, CartLine, User, PlatformStats, Coupon, ReferralData } from '@/lib/types';
+import { Product, Category, Order, CartLine, User, PlatformStats, Coupon, ReferralData, SiteSettings, StorefrontInitData } from '@/lib/types';
+import { DEFAULT_SITE_SETTINGS } from '@/lib/settings';
 import { money, sleep } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StorefrontHeader } from '@/components/StorefrontHeader';
+import { StorefrontFooter } from '@/components/StorefrontFooter';
 
 type View = 'home' | 'shop' | 'product' | 'checkout' | 'confirmation' | 'account' | 'about';
 
@@ -87,6 +90,7 @@ function formatCouponExpiry(expiresAt?: string, isUsed?: number | boolean, isExp
 
 export default function Page() {
   const [view, setView] = useState<View>('home');
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(DEFAULT_SITE_SETTINGS);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -374,7 +378,7 @@ export default function Page() {
       const catData = await apiRequest<Category[]>('/api/categories/categories.php');
       setCategories(Array.isArray(catData) ? catData : []);
     } catch {
-      // Keep default/empty categories gracefully
+      // Keep default categories gracefully
     } finally {
       setCategoriesLoading(false);
     }
@@ -389,8 +393,35 @@ export default function Page() {
     }
   }
 
-  function loadInitialData() {
-    Promise.allSettled([loadProducts(), loadCategories(), loadStats()]);
+  // Fetch all initial storefront data in a single network round-trip
+  async function loadInitialData() {
+    setProductsLoading(true);
+    setCategoriesLoading(true);
+    setProductsError('');
+
+    try {
+      const initData = await apiRequest<StorefrontInitData>('/api/storefront/init.php');
+      if (initData) {
+        if (initData.settings) {
+          setSiteSettings(initData.settings);
+        }
+        if (Array.isArray(initData.products)) {
+          setProducts(initData.products);
+        }
+        if (Array.isArray(initData.categories)) {
+          setCategories(initData.categories);
+        }
+        if (initData.stats) {
+          setStats(initData.stats);
+        }
+      }
+    } catch {
+      // Fallback to individual requests if unified endpoint is unavailable
+      Promise.allSettled([loadProducts(), loadCategories(), loadStats()]);
+    } finally {
+      setProductsLoading(false);
+      setCategoriesLoading(false);
+    }
   }
 
   async function loadUserProfile() {
@@ -854,141 +885,18 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-[#f5f5f1] text-[#14212b] selection:bg-[#e0ee56] flex flex-col justify-between">
       <div>
-        {/* Top Banner */}
-        <div className="bg-[#14212b] px-3 sm:px-5 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#e0ee56]">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between text-center sm:text-left">
-            <span className="flex items-center gap-2">
-              Direct Retail & Wholesale Marketplace · Guaranteed Fast Delivery
-            </span>
-            <span className="hidden md:inline font-bold">Currency: Nigerian Naira (NGN / ₦)</span>
-          </div>
-        </div>
-
-        {/* Header */}
-        <header className="sticky top-0 z-30 border-b border-[#14212b]/15 bg-[#f5f5f1]/95 backdrop-blur">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-3 sm:px-5 py-3 sm:py-4">
-            <div className="flex items-center gap-3 sm:gap-6">
-              {/* Mobile menu button */}
-              <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="grid size-9 place-items-center border border-[#14212b]/20 md:hidden cursor-pointer hover:bg-[#14212b] hover:text-[#e0ee56] transition-colors"
-                aria-label="Toggle Menu"
-              >
-                {mobileMenuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
-              </button>
-
-              <button
-                onClick={() => { navigateTo('home'); setMobileMenuOpen(false); }}
-                className="flex items-center gap-2 text-xl font-black tracking-[-0.08em] cursor-pointer"
-              >
-                <span className="grid size-7 place-items-center bg-[#14212b] text-sm text-[#e0ee56] font-black">S</span>
-                <span>SHOP IT</span>
-              </button>
-
-              <nav className="hidden items-center gap-6 text-xs font-bold uppercase tracking-[0.13em] md:flex ml-2">
-                <button
-                  onClick={() => { setSelectedCategory(null); navigateTo('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  className={view === 'home' ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
-                >
-                  Home
-                </button>
-                <button
-                  onClick={() => { setSelectedCategory(null); navigateTo('shop'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  className={view === 'shop' && selectedCategory === null ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
-                >
-                  All Products
-                </button>
-                <button
-                  onClick={() => { navigateTo('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  className={view === 'about' ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
-                >
-                  About ShopIt
-                </button>
-              </nav>
-            </div>
-
-            {/* Desktop Search Bar */}
-            {view === 'shop' && (
-              <div className="relative hidden max-w-xs flex-1 md:block">
-                <Search className="absolute left-3 top-2.5 size-4 text-[#14212b]/50" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search products, brands, categories..."
-                  className="w-full border border-[#14212b]/20 bg-transparent py-2 pl-9 pr-3 text-xs outline-none placeholder:text-[#14212b]/45 focus:border-[#9a4e2c]"
-                />
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex items-center gap-2 sm:gap-4">
-              <button
-                onClick={() => { navigateTo('account'); setMobileMenuOpen(false); }}
-                className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.12em] hover:text-[#9a4e2c] cursor-pointer p-1"
-              >
-                <CircleUserRound className="size-4.5" />
-                <span className="hidden sm:inline">{user ? user.first_name : 'Account'}</span>
-              </button>
-
-              <button
-                onClick={() => setCartOpen(true)}
-                className="relative grid size-9 place-items-center border border-[#14212b]/20 hover:bg-[#14212b] hover:text-[#e0ee56] transition-colors cursor-pointer"
-                aria-label="View Shopping Bag"
-              >
-                <ShoppingCart className="size-4" />
-                {cart.length > 0 && (
-                  <span className="absolute -right-2 -top-2 grid size-5 place-items-center rounded-full bg-[#e0ee56] text-[#14212b] text-[10px] font-black shadow-xs">
-                    {cart.reduce((acc, l) => acc + l.quantity, 0)}
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Mobile Search & Menu Expandable */}
-          {mobileMenuOpen && (
-            <div className="border-t border-[#14212b]/15 bg-[#f5f5f1] p-4 md:hidden animate-in slide-in-from-top-2 duration-150">
-              {view === 'shop' && <div className="relative mb-3">
-                <Search className="absolute left-3 top-2.5 size-4 text-[#14212b]/50" />
-                <input
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    if (view !== 'shop') setView('shop');
-                  }}
-                  placeholder="Search products..."
-                  className="w-full border border-[#14212b]/20 bg-[#e8e8e1]/50 py-2 pl-9 pr-3 text-xs outline-none focus:border-[#9a4e2c]"
-                />
-              </div>}
-              <div className="flex flex-col gap-2 text-xs font-black uppercase tracking-[0.14em]">
-                <button
-                  onClick={() => { setSelectedCategory(null); navigateTo('shop'); setMobileMenuOpen(false); }}
-                  className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
-                >
-                  All Products
-                </button>
-                <button
-                  onClick={() => { navigateTo('about'); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer text-[#9a4e2c]"
-                >
-                  About ShopIt
-                </button>
-                <button
-                  onClick={() => { navigateTo('home'); setMobileMenuOpen(false); }}
-                  className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
-                >
-                  Home & Categories
-                </button>
-                <button
-                  onClick={() => { navigateTo('account'); setMobileMenuOpen(false); }}
-                  className="p-2.5 text-left hover:bg-[#e8e8e1] border border-[#14212b]/10 cursor-pointer"
-                >
-                  My Account & Orders
-                </button>
-              </div>
-            </div>
-          )}
-        </header>
+        <StorefrontHeader
+          settings={siteSettings}
+          view={view}
+          onNavigate={(v) => navigateTo(v)}
+          search={search}
+          setSearch={setSearch}
+          cartItemCount={cart.reduce((acc, l) => acc + l.quantity, 0)}
+          onOpenCart={() => setCartOpen(true)}
+          user={user}
+          selectedCategory={selectedCategory}
+          setSelectedCategory={setSelectedCategory}
+        />
 
         {/* Main Views Container */}
         <main>
@@ -1126,6 +1034,7 @@ export default function Page() {
 
           {view === 'about' && (
             <AboutView
+              settings={siteSettings}
               stats={stats}
               onBrowseProducts={() => {
                 setSelectedCategory(null);
@@ -1253,91 +1162,19 @@ export default function Page() {
         </div>
       )}
 
-      {/* Redesigned Multi-Column Footer */}
-      <footer className="mt-20 border-t border-[#14212b]/15 bg-[#14212b] text-[#f5f5f1]">
-        {/* Main Footer Body */}
-        <div className="mx-auto max-w-[1440px] px-4 sm:px-6 py-14 lg:py-18">
-          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-12">
-            {/* Col 1: Brand (4 cols) */}
-            <div className="lg:col-span-4 space-y-4">
-              <div className="flex items-center gap-2.5 text-xl font-black tracking-tight">
-                <span className="grid size-7 place-items-center bg-[#e0ee56] text-sm text-[#14212b] font-black">S</span>
-                <span>SHOP IT COMMERCE</span>
-              </div>
-              <p className="text-xs text-white/60 leading-relaxed max-w-sm">
-                Nigeria's premier direct goods marketplace. Supplying quality electronics, solar energy systems, industrial equipment, and workplace solutions nationwide.
-              </p>
-              <div className="pt-2 text-xs text-white/40 space-y-1 font-mono">
-                <p>RC Number: 1894022-NG</p>
-                <p>Location: Victoria Island, Lagos, Nigeria</p>
-                <p>Customer Support: support@shopit.co</p>
-              </div>
-            </div>
-
-            {/* Col 2: Categories (3 cols) */}
-            <div className="lg:col-span-3 space-y-3">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-[#e0ee56]">Categories</p>
-              <ul className="space-y-2 text-xs text-white/70">
-                {categories.slice(0, 5).map((cat) => (
-                  <li key={cat.category_id}>
-                    <button
-                      onClick={() => { setSelectedCategory(cat.category_id); navigateTo('shop'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                      className="hover:text-[#e0ee56] transition-colors cursor-pointer text-left"
-                    >
-                      {cat.category_name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Col 3: Customer Links (2 cols) */}
-            <div className="lg:col-span-2 space-y-3">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-[#e0ee56]">Customer Service</p>
-              <ul className="space-y-2 text-xs text-white/70">
-                <li><button onClick={() => navigateTo('account')} className="hover:text-[#e0ee56] cursor-pointer">My Account</button></li>
-                <li><button onClick={() => { setSelectedCategory(null); navigateTo('shop'); }} className="hover:text-[#e0ee56] cursor-pointer">Catalog Inventory</button></li>
-                <li><button onClick={() => { navigateTo('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-[#e0ee56] cursor-pointer">About ShopIt</button></li>
-                <li><span className="text-white/40">Delivery & Returns</span></li>
-                <li><span className="text-white/40">Privacy Policy</span></li>
-              </ul>
-            </div>
-
-            {/* Col 4: Newsletter Box (3 cols) */}
-            <div className="lg:col-span-3 border border-white/10 bg-white/5 p-5 rounded-xs space-y-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#e0ee56] flex items-center gap-2">
-                  <Mail className="size-4" /> Newsletter
-                </p>
-                <h4 className="mt-1 text-sm font-black text-white">Get Weekly Offers</h4>
-                <p className="mt-1 text-xs text-white/60 leading-relaxed">
-                  Subscribe to receive discount alerts, new product arrivals, and special promotions.
-                </p>
-              </div>
-
-              <FooterNewsletterForm onSubscribe={handleNewsletterSubscribe} loading={newsletterLoading} />
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Bar */}
-        <div className="border-t border-white/10 bg-[#0d161d] px-4 sm:px-6 py-5 text-xs text-white/50">
-          <div className="mx-auto flex max-w-[1440px] flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-4 text-center sm:text-left">
-              <span>© 2026 ShopIt Commerce Ltd. All rights reserved.</span>
-              <span className="hidden sm:inline">·</span>
-              <span className="inline-flex items-center gap-1.5 bg-[#14212b] border border-white/10 px-2 py-0.5 text-[10px] font-bold text-[#e0ee56]">
-                🇳🇬 Currency: NGN (₦)
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 text-white/60 text-[11px]">
-              <ShieldCheck className="size-4 text-[#e0ee56]" />
-              <span>Verified Secure 256-Bit Encrypted Checkout</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      {/* Reusable Storefront Footer */}
+      <StorefrontFooter
+        settings={siteSettings}
+        categories={categories}
+        onSelectCategory={(id) => {
+          setSelectedCategory(id > 0 ? id : null);
+        }}
+        onNavigate={(v) => {
+          navigateTo(v);
+        }}
+        onNewsletterSubmit={handleNewsletterSubscribe}
+        newsletterLoading={newsletterLoading}
+      />
 
       {/* Floating scroll control */}
       <button
@@ -1383,41 +1220,6 @@ export default function Page() {
   );
 }
 
-function FooterNewsletterForm({
-  onSubscribe,
-  loading,
-}: {
-  onSubscribe: (e: React.FormEvent, email: string, resetFn: () => void) => void;
-  loading: boolean;
-}) {
-  const [email, setEmail] = useState('');
-
-  return (
-    <form onSubmit={(e) => onSubscribe(e, email, () => setEmail(''))} className="flex flex-col gap-2">
-      <input
-        type="email"
-        required
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="yourname@gmail.com"
-        className="border border-white/20 bg-[#14212b] px-3 py-2 text-xs text-white outline-none focus:border-[#e0ee56] placeholder:text-white/40"
-      />
-      <button
-        disabled={loading}
-        className="bg-[#e0ee56] text-[#14212b] px-4 py-2 text-xs font-black uppercase tracking-wider hover:bg-[#d4e24a] cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
-      >
-        {loading ? (
-          <>
-            <Loader2 className="size-3.5 animate-spin" />
-            <span>Joining...</span>
-          </>
-        ) : (
-          'Subscribe'
-        )}
-      </button>
-    </form>
-  );
-}
 
 function HomeView({
   products,
@@ -3886,21 +3688,23 @@ function AccountView({
 }
 
 function AboutView({
+  settings,
   stats,
   onBrowseProducts,
   onBrowseCategories,
 }: {
+  settings: SiteSettings;
   stats: PlatformStats | null;
   onBrowseProducts: () => void;
   onBrowseCategories: () => void;
 }) {
   return (
     <div className="flex flex-col gap-16 py-8">
-      {/* 1. About Hero */}
+      {/* About hero */}
       <section className="relative overflow-hidden bg-[#14212b] px-4 sm:px-6 py-16 sm:py-24 text-[#f5f5f1]">
         <div className="mx-auto max-w-[1440px]">
           <div className="mb-4 inline-flex items-center gap-2 border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-[#e0ee56]">
-            <span>About ShopIt Commerce</span>
+            <span>About {settings.company_name}</span>
           </div>
 
           <h1 className="max-w-4xl text-[clamp(2.5rem,6vw,5.5rem)] font-black uppercase leading-[.9] tracking-[-0.07em]">
@@ -3909,7 +3713,7 @@ function AboutView({
           </h1>
 
           <p className="mt-6 max-w-2xl text-base sm:text-lg leading-relaxed text-white/75">
-            ShopIt is Nigeria's direct-to-consumer and business-to-business commerce hub, established to eliminate opaque middlemen markups and deliver genuine quality products across the country at honest Nigerian Naira (₦) prices.
+            {settings.company_name} is Nigeria's direct-to-consumer and business-to-business commerce hub, established to eliminate opaque middlemen markups and deliver genuine quality products across the country at honest Nigerian Naira (₦) prices.
           </p>
 
           <div className="mt-10 flex flex-wrap gap-4">
@@ -3923,13 +3727,13 @@ function AboutView({
               onClick={onBrowseCategories}
               className="border border-white/30 text-white px-6 py-4 text-xs font-black uppercase tracking-[0.15em] hover:bg-white/10 cursor-pointer"
             >
-              View 10 Categories
+              View All Categories
             </button>
           </div>
         </div>
       </section>
 
-      {/* 2. Our Mission & Story */}
+      {/* Mission and story */}
       <section className="mx-auto max-w-[1440px] px-4 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
           <div>
@@ -3938,10 +3742,10 @@ function AboutView({
               Bridging the gap between manufacturers and Nigerian buyers
             </h2>
             <p className="mt-6 text-sm sm:text-base leading-relaxed text-[#14212b]/80">
-              Founded with the belief that purchasing essential provisions, office stationery, industrial tools, solar equipment, and electronics should be seamless and dependable, ShopIt eliminates counterfeit risks by working directly with accredited manufacturers and primary distributors.
+              Founded with the belief that purchasing essential provisions, office stationery, industrial tools, solar equipment, and electronics should be seamless and dependable, {settings.company_name} eliminates counterfeit risks by working directly with accredited manufacturers and primary distributors.
             </p>
             <p className="mt-4 text-sm sm:text-base leading-relaxed text-[#14212b]/80">
-              Whether you are an individual stocking up household food stuff, an enterprise equipping a corporate office, or an artisan sourcing precision equipment, ShopIt guarantees verified stock and same-day handling.
+              Whether you are an individual stocking up household food stuff, an enterprise equipping a corporate office, or an artisan sourcing precision equipment, {settings.company_name} guarantees verified stock and same-day handling.
             </p>
           </div>
 
@@ -3970,13 +3774,13 @@ function AboutView({
         </div>
       </section>
 
-      {/* 3. The 4 ShopIt Guarantees */}
+      {/* Core guarantees */}
       <section className="border-y border-[#14212b]/15 bg-[#e8e8e1] py-16 px-4 sm:px-6">
         <div className="mx-auto max-w-[1440px]">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9a4e2c]">Our Core Pillars</p>
             <h2 className="mt-2 text-3xl sm:text-4xl font-black uppercase tracking-[-0.05em] text-[#14212b]">
-              Why Nigerians Choose ShopIt
+              Why Customers Choose {settings.company_name}
             </h2>
           </div>
 
@@ -4024,16 +3828,16 @@ function AboutView({
         </div>
       </section>
 
-      {/* 4. Company Information & Contact */}
+      {/* Company information and contact */}
       <section className="mx-auto max-w-[1440px] px-4 sm:px-6 pb-8">
         <div className="border border-[#14212b]/20 bg-[#14212b] text-[#f5f5f1] p-8 sm:p-12">
           <div className="grid gap-8 lg:grid-cols-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#e0ee56]">Corporate HQ</p>
-              <h3 className="mt-1 text-xl font-black text-white uppercase">ShopIt Commerce Ltd</h3>
+              <h3 className="mt-1 text-xl font-black text-white uppercase">{settings.company_name}</h3>
               <p className="mt-3 text-xs text-white/70 leading-relaxed">
-                Registered in Nigeria under RC No. 1894022-NG.<br />
-                Commercial Towers, Plot 14, Victoria Island, Lagos, Nigeria.
+                {settings.rc_number ? `Registered under ${settings.rc_number}.` : 'Registered corporate entity.'}<br />
+                {settings.office_address || 'Commercial Towers, Plot 14, Victoria Island, Lagos, Nigeria.'}
               </p>
             </div>
 
@@ -4042,7 +3846,7 @@ function AboutView({
               <h3 className="mt-1 text-xl font-black text-white uppercase">Monday – Saturday</h3>
               <p className="mt-3 text-xs text-white/70 leading-relaxed">
                 Order Processing: 8:00 AM – 6:00 PM WAT<br />
-                Customer Support: 24/7 via support@shopit.co
+                Customer Support: 24/7 via {settings.primary_email || 'support@shopit.co'}
               </p>
             </div>
 
