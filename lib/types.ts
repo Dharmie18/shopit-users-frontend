@@ -130,4 +130,11 @@ export interface StorefrontInitData {
   stats: PlatformStats;
 }
 
+export interface UserDashboardData {
+  profile: User;
+  orders: Order[];
+  referrals: ReferralData;
+  cart: CartLine[];
+}
+
 

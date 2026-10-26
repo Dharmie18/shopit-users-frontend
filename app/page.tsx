@@ -51,7 +51,7 @@ import {
 } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { saveAuth, getAuthUser, clearAuth, isAuthenticated } from '@/lib/auth';
-import { Product, Category, Order, CartLine, User, PlatformStats, Coupon, ReferralData, SiteSettings, StorefrontInitData } from '@/lib/types';
+import { Product, Category, Order, CartLine, User, PlatformStats, Coupon, ReferralData, SiteSettings, StorefrontInitData, UserDashboardData } from '@/lib/types';
 import { DEFAULT_SITE_SETTINGS } from '@/lib/settings';
 import { money, sleep } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -282,10 +282,7 @@ export default function Page() {
               });
               notify('🎉 Email verified successfully! Welcome to your ShopIt Account Dashboard.');
               setView('account');
-              loadUserProfile();
-              loadUserOrders();
-              loadReferralData();
-              loadUserCart(savedLocalCart);
+              loadUserDashboard(savedLocalCart);
             }
           })
           .catch((err: any) => {
@@ -301,19 +298,14 @@ export default function Page() {
 
     if (isAuthenticated()) {
       setUser(getAuthUser());
-      loadUserProfile();
-      loadUserOrders();
-      loadReferralData();
-      loadUserCart();
+      loadUserDashboard();
     }
   }, []);
 
   // Reload user profile, orders, and rewards on entering account view
   useEffect(() => {
     if (view === 'account' && isAuthenticated()) {
-      loadUserProfile();
-      loadUserOrders();
-      loadReferralData();
+      loadUserDashboard();
     }
   }, [view]);
 
@@ -359,40 +351,6 @@ export default function Page() {
     };
   }, []);
 
-  async function loadProducts() {
-    setProductsLoading(true);
-    setProductsError('');
-    try {
-      const prodData = await apiRequest<Product[]>('/api/products/products.php');
-      setProducts(Array.isArray(prodData) ? prodData : []);
-    } catch (err: any) {
-      setProductsError(err.message || 'Unable to connect to product catalog.');
-    } finally {
-      setProductsLoading(false);
-    }
-  }
-
-  async function loadCategories() {
-    setCategoriesLoading(true);
-    try {
-      const catData = await apiRequest<Category[]>('/api/categories/categories.php');
-      setCategories(Array.isArray(catData) ? catData : []);
-    } catch {
-      // Keep default categories gracefully
-    } finally {
-      setCategoriesLoading(false);
-    }
-  }
-
-  async function loadStats() {
-    try {
-      const statsData = await apiRequest<PlatformStats>('/api/stats/overview.php');
-      if (statsData) setStats(statsData);
-    } catch {
-      // Keep default stats gracefully
-    }
-  }
-
   // Fetch all initial storefront data in a single network round-trip
   async function loadInitialData() {
     setProductsLoading(true);
@@ -416,11 +374,53 @@ export default function Page() {
         }
       }
     } catch {
-      // Fallback to individual requests if unified endpoint is unavailable
-      Promise.allSettled([loadProducts(), loadCategories(), loadStats()]);
+      // Fallback if unified endpoint is unavailable
+      Promise.allSettled([
+        apiRequest<Product[]>('/api/products/products.php')
+          .then((d) => { if (Array.isArray(d)) setProducts(d); })
+          .catch((err: any) => setProductsError(err.message || 'Unable to connect to product catalog.')),
+        apiRequest<Category[]>('/api/categories/categories.php')
+          .then((d) => { if (Array.isArray(d)) setCategories(d); })
+          .catch(() => {}),
+        apiRequest<PlatformStats>('/api/stats/overview.php')
+          .then((d) => { if (d) setStats(d); })
+          .catch(() => {}),
+      ]);
     } finally {
       setProductsLoading(false);
       setCategoriesLoading(false);
+    }
+  }
+
+  // Fetch unified customer account data in a single network round-trip
+  async function loadUserDashboard(guestCartToMerge?: CartLine[]) {
+    if (!isAuthenticated()) return;
+    setOrdersLoading(true);
+    setReferralLoading(true);
+    try {
+      const data = await apiRequest<UserDashboardData>('/api/users/dashboard.php', 'GET', undefined, true);
+      if (data) {
+        if (data.profile) setUser(data.profile);
+        if (Array.isArray(data.orders)) setUserOrders(data.orders);
+        if (data.referrals) setReferralData(data.referrals);
+        if (Array.isArray(data.cart)) {
+          setCart(data.cart);
+          try {
+            if (data.cart.length > 0) {
+              localStorage.setItem('shopit_cart', JSON.stringify(data.cart));
+            }
+          } catch {}
+        }
+      }
+    } catch {
+      // Fallback to individual requests if unified endpoint is unavailable
+      loadUserProfile();
+      loadUserOrders();
+      loadReferralData();
+      loadUserCart(guestCartToMerge);
+    } finally {
+      setOrdersLoading(false);
+      setReferralLoading(false);
     }
   }
 
@@ -646,12 +646,7 @@ export default function Page() {
         });
         setAuthForm({ first_name: '', last_name: '', email: '', password: '', referral_code: '' });
         notify('Logged in successfully.');
-        Promise.allSettled([
-          loadUserProfile(),
-          loadUserOrders(),
-          loadReferralData(),
-          loadUserCart(guestItems),
-        ]);
+        loadUserDashboard(guestItems);
 
         // Optional frontend Nodemailer login alert trigger
         fetch('/api/send-email', {
@@ -907,7 +902,7 @@ export default function Page() {
               productsLoading={productsLoading}
               productsError={productsError}
               categoriesLoading={categoriesLoading}
-              onRetryProducts={loadProducts}
+              onRetryProducts={loadInitialData}
               onBrowseCategory={(catId) => {
                 setSelectedCategory(catId);
                 navigateTo('shop');
@@ -935,7 +930,7 @@ export default function Page() {
               categories={categories}
               productsLoading={productsLoading}
               productsError={productsError}
-              onRetryProducts={loadProducts}
+              onRetryProducts={loadInitialData}
               selectedCategory={selectedCategory}
               onSelectCategory={setSelectedCategory}
               search={search}
