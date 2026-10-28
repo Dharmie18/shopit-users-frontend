@@ -546,7 +546,7 @@ export default function Page() {
   const activeDiscountPercent = appliedCoupon && isCouponEligible ? Number(appliedCoupon.discount_percent) : 0;
   const discountAmount = Math.round((subtotal * activeDiscountPercent) / 100);
   const finalSubtotal = Math.max(0, subtotal - discountAmount);
-  const tax = finalSubtotal * 0.075; // 7.5% Nigerian VAT
+  const tax = finalSubtotal * ((siteSettings.vat_percent ?? 7.5) / 100);
   const grandTotal = finalSubtotal + tax;
 
   async function handleApplyCoupon(codeToApply?: string) {
@@ -860,7 +860,7 @@ export default function Page() {
     setNewsletterLoading(true);
     try {
       const res = await apiRequest('/api/newsletter/subscribe.php', 'POST', { email: emailInput });
-      notify(res.message || 'Subscribed to ShopIt updates!');
+      notify(res.message || (siteSettings.company_name ? `Subscribed to ${siteSettings.company_name} updates!` : 'Subscribed to updates!'));
       setNewsletterMsg(res.message || 'Subscribed successfully!');
       if (resetFn) resetFn();
       setNewsletterEmail('');
@@ -897,6 +897,7 @@ export default function Page() {
         <main>
           {view === 'home' && (
             <HomeView
+              settings={siteSettings}
               products={products}
               categories={categories}
               productsLoading={productsLoading}
@@ -926,6 +927,7 @@ export default function Page() {
 
           {view === 'shop' && (
             <ShopView
+              settings={siteSettings}
               products={filteredProducts}
               categories={categories}
               productsLoading={productsLoading}
@@ -943,6 +945,7 @@ export default function Page() {
           {view === 'product' && (
             selectedProduct ? (
               <ProductDetailView
+                settings={siteSettings}
                 product={selectedProduct}
                 onBack={() => navigateTo('shop')}
                 onAddToCart={addToCart}
@@ -964,6 +967,7 @@ export default function Page() {
 
           {view === 'checkout' && (
             <CheckoutView
+              settings={siteSettings}
               cart={cart}
               subtotal={subtotal}
               tax={tax}
@@ -1004,6 +1008,7 @@ export default function Page() {
 
           {view === 'account' && (
             <AccountView
+              settings={siteSettings}
               user={user}
               mode={accountMode}
               setMode={(m) => {
@@ -1068,7 +1073,7 @@ export default function Page() {
                   <Package className="size-12 text-[#14212b]/20 mb-3" />
                   <p className="font-black text-sm uppercase">Your bag is empty</p>
                   <p className="mt-1 text-xs text-[#14212b]/60 max-w-xs">
-                    Browse our products and add items in Nigerian Naira (₦).
+                    Browse our products and add items in {siteSettings.currency_code} ({siteSettings.currency_symbol}).
                   </p>
                   <button
                     onClick={() => { setCartOpen(false); navigateTo('shop'); }}
@@ -1096,7 +1101,7 @@ export default function Page() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-black truncate">{line.product.product_name}</h4>
-                      <p className="text-xs font-mono font-bold text-[#9a4e2c] mt-0.5">{money(line.product.price)} each</p>
+                      <p className="text-xs font-mono font-bold text-[#9a4e2c] mt-0.5">{money(line.product.price, siteSettings.currency_symbol)} each</p>
                       <div className="mt-3 flex items-center justify-between">
                         <div className="flex items-center border border-[#14212b]/20 bg-[#f5f5f1]">
                           <button
@@ -1131,15 +1136,15 @@ export default function Page() {
               <div className="border-t border-[#14212b]/15 bg-[#e8e8e1] p-5 space-y-3">
                 <div className="flex justify-between text-xs font-bold text-[#14212b]/70">
                   <span>Subtotal</span>
-                  <span className="font-mono font-black">{money(subtotal)}</span>
+                  <span className="font-mono font-black">{money(subtotal, siteSettings.currency_symbol)}</span>
                 </div>
                 <div className="flex justify-between text-xs font-bold text-[#14212b]/70">
-                  <span>VAT (7.5%)</span>
-                  <span className="font-mono font-black">{money(tax)}</span>
+                  <span>VAT ({siteSettings.vat_percent}%)</span>
+                  <span className="font-mono font-black">{money(tax, siteSettings.currency_symbol)}</span>
                 </div>
                 <div className="flex justify-between text-base font-black border-t border-[#14212b]/15 pt-2">
-                  <span>Total Due (NGN)</span>
-                  <span className="font-mono text-lg text-[#9a4e2c]">{money(subtotal + tax)}</span>
+                  <span>Total Due ({siteSettings.currency_code})</span>
+                  <span className="font-mono text-lg text-[#9a4e2c]">{money(subtotal + tax, siteSettings.currency_symbol)}</span>
                 </div>
 
                 <button
@@ -1217,6 +1222,7 @@ export default function Page() {
 
 
 function HomeView({
+  settings,
   products,
   categories,
   productsLoading,
@@ -1234,6 +1240,7 @@ function HomeView({
   newsletterMsg,
   stats,
 }: {
+  settings: SiteSettings;
   products: Product[];
   categories: Category[];
   productsLoading: boolean;
@@ -1263,11 +1270,11 @@ function HomeView({
 
             <h1 className="max-w-4xl text-[clamp(2.6rem,7vw,7.5rem)] font-black uppercase leading-[.88] sm:leading-[.84] tracking-[-0.08em] sm:tracking-[-0.09em]">
               Quality goods.<br />
-              <span className="text-[#e0ee56]">Direct Naira pricing.</span>
+              <span className="text-[#e0ee56]">{settings.tagline}</span>
             </h1>
 
             <p className="mt-6 max-w-xl text-sm sm:text-base leading-relaxed text-white/70">
-              Discover quality food stuff, everyday groceries, stationery, consumer electronics, solar systems, home essentials, and workshop tools with transparent Naira pricing.
+              Discover quality food stuff, everyday groceries, stationery, consumer electronics, solar systems, home essentials, and workshop tools with transparent {settings.currency_code} ({settings.currency_symbol}) pricing.
             </p>
 
             <div className="mt-8 sm:mt-10 flex flex-wrap items-center gap-4">
@@ -1332,7 +1339,7 @@ function HomeView({
               Filter by Category
             </h2>
             <p className="mt-1 text-xs text-[#14212b]/70 leading-relaxed">
-              Select any of our {categories.length} verified sectors to view products with live stock and direct Naira (₦) pricing.
+              Select any of our {categories.length} verified sectors to view products with live stock and direct {settings.currency_code} ({settings.currency_symbol}) pricing.
             </p>
           </div>
 
@@ -1411,17 +1418,17 @@ function HomeView({
               </div>
             ) : (
               products.slice(0, 8).map((p) => (
-                <ProductCard key={p.product_id} product={p} onProduct={onProduct} />
+                <ProductCard key={p.product_id} product={p} onProduct={onProduct} currencySymbol={settings.currency_symbol} />
               ))
             )}
           </div>
         </div>
       </section>
 
-      {/* 4. Advantages / Why ShopIt */}
+      {/* 4. Advantages / Why Us */}
       <section className="mx-auto max-w-[1440px] px-4 sm:px-6 py-16 sm:py-24">
         <div className="text-center max-w-3xl mx-auto mb-14">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9a4e2c]">The ShopIt Advantage</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9a4e2c]">The {settings.company_name} Advantage</p>
           <h2 className="mt-2 text-3xl sm:text-5xl font-black uppercase tracking-tight">Why Shop with Us</h2>
           <p className="mt-3 text-sm text-[#14212b]/70">
             Delivering quality goods with verified pricing, secure settlement, and reliable nationwide fulfillment.
@@ -1436,7 +1443,7 @@ function HomeView({
             <div>
               <h3 className="text-lg font-black uppercase tracking-tight">Direct Pricing</h3>
               <p className="mt-2 text-xs text-[#14212b]/70 leading-relaxed">
-                Enjoy transparent Nigerian Naira pricing directly mapped to actual inventory without hidden markups.
+                Enjoy transparent {settings.currency_code} ({settings.currency_symbol}) pricing directly mapped to actual inventory without hidden markups.
               </p>
             </div>
           </div>
@@ -1494,7 +1501,7 @@ function HomeView({
             <div className="border border-white/15 bg-white/5 p-6 space-y-4">
               <Quote className="size-6 text-[#e0ee56] opacity-60" />
               <p className="text-xs sm:text-sm text-white/80 leading-relaxed">
-                "ShopIt's solar hardware pricing enabled our firm to execute our 200kW installation smoothly with significant cost savings."
+                "{settings.company_name}'s solar hardware pricing enabled our firm to execute our 200kW installation smoothly with significant cost savings."
               </p>
               <div className="pt-3 border-t border-white/10">
                 <p className="text-xs font-black text-white">Engr. Tunde Adeleke</p>
@@ -1593,7 +1600,15 @@ function ProductCardSkeleton() {
   );
 }
 
-function ProductCard({ product, onProduct }: { product: Product; onProduct: (p: Product) => void }) {
+function ProductCard({
+  product,
+  onProduct,
+  currencySymbol = '₦',
+}: {
+  product: Product;
+  onProduct: (p: Product) => void;
+  currencySymbol?: string;
+}) {
   const isOutOfStock = product.stock_quantity <= 0;
 
   return (
@@ -1639,7 +1654,7 @@ function ProductCard({ product, onProduct }: { product: Product; onProduct: (p: 
       </div>
 
       <div className="mt-6 flex items-center justify-between border-t border-[#14212b]/10 pt-4">
-        <span className="text-base font-black font-mono text-[#14212b]">{money(product.price)}</span>
+        <span className="text-base font-black font-mono text-[#14212b]">{money(product.price, currencySymbol)}</span>
         <span className="text-[10px] font-black uppercase tracking-wider text-[#14212b]/60 group-hover:text-[#14212b] group-hover:underline flex items-center gap-1">
           Inspect <ArrowRight className="size-3" />
         </span>
@@ -1649,6 +1664,7 @@ function ProductCard({ product, onProduct }: { product: Product; onProduct: (p: 
 }
 
 function ShopView({
+  settings,
   products,
   categories,
   productsLoading,
@@ -1661,6 +1677,7 @@ function ShopView({
   onProduct,
   onAddToCart,
 }: {
+  settings: SiteSettings;
   products: Product[];
   categories: Category[];
   productsLoading: boolean;
@@ -1679,7 +1696,7 @@ function ShopView({
       <div className="flex flex-col justify-between gap-4 border-b border-[#14212b]/15 pb-6 sm:flex-row sm:items-end">
         <div>
           <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Live Products</p>
-          <h1 className="mt-1 text-3xl sm:text-5xl font-black uppercase tracking-tight">Product Catalog (₦)</h1>
+          <h1 className="mt-1 text-3xl sm:text-5xl font-black uppercase tracking-tight">Product Catalog ({settings.currency_symbol || '₦'})</h1>
         </div>
         <p className="text-xs text-[#14212b]/60 font-bold">
           Showing {products.length} products
@@ -1760,7 +1777,7 @@ function ShopView({
           </div>
         ) : (
           products.map((p) => (
-            <ProductCard key={p.product_id} product={p} onProduct={onProduct} />
+            <ProductCard key={p.product_id} product={p} onProduct={onProduct} currencySymbol={settings.currency_symbol} />
           ))
         )}
       </div>
@@ -1769,10 +1786,12 @@ function ShopView({
 }
 
 function ProductDetailView({
+  settings,
   product,
   onBack,
   onAddToCart,
 }: {
+  settings: SiteSettings;
   product: Product;
   onBack: () => void;
   onAddToCart: (p: Product, qty: number) => void;
@@ -1829,7 +1848,7 @@ function ProductDetailView({
             </h1>
 
             <div className="mt-4 text-2xl sm:text-3xl font-mono font-black text-[#14212b]">
-              {money(product.price)}
+              {money(product.price, settings.currency_symbol)}
             </div>
 
             <p className="mt-6 text-sm sm:text-base leading-relaxed text-[#14212b]/75">
@@ -1849,7 +1868,7 @@ function ProductDetailView({
               </div>
               <div className="flex justify-between">
                 <span className="text-[#14212b]/60">Currency</span>
-                <span className="font-mono">Nigerian Naira (NGN / ₦)</span>
+                <span className="font-mono">{settings.currency_code} ({settings.currency_symbol})</span>
               </div>
             </div>
           </div>
@@ -1889,6 +1908,7 @@ function ProductDetailView({
 }
 
 function CheckoutView({
+  settings,
   cart,
   subtotal,
   tax,
@@ -1917,6 +1937,7 @@ function CheckoutView({
   virtualAccountError,
   onRefreshVirtualAccount,
 }: {
+  settings: SiteSettings;
   cart: CartLine[];
   subtotal: number;
   tax: number;
@@ -1997,7 +2018,7 @@ function CheckoutView({
 
       <div className="border-b border-[#14212b]/15 pb-6 mb-8">
         <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Order Fulfillment</p>
-        <h1 className="mt-1 text-3xl sm:text-5xl font-black uppercase tracking-tight">Checkout in Naira (₦)</h1>
+        <h1 className="mt-1 text-3xl sm:text-5xl font-black uppercase tracking-tight">Checkout ({settings.currency_symbol || '₦'})</h1>
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[1.2fr_.8fr]">
@@ -2421,9 +2442,9 @@ function CheckoutView({
               <div key={line.product_id} className="py-3 flex justify-between items-center text-xs">
                 <div>
                   <p className="font-bold">{line.product.product_name}</p>
-                  <p className="text-[10px] text-[#14212b]/60">Qty: {line.quantity} × {money(line.product.price)}</p>
+                  <p className="text-[10px] text-[#14212b]/60">Qty: {line.quantity} × {money(line.product.price, settings.currency_symbol)}</p>
                 </div>
-                <span className="font-mono font-black">{money(Number(line.product.price) * line.quantity)}</span>
+                <span className="font-mono font-black">{money(Number(line.product.price) * line.quantity, settings.currency_symbol)}</span>
               </div>
             ))}
           </div>
@@ -2431,7 +2452,7 @@ function CheckoutView({
           <div className="border-t border-[#14212b]/15 pt-4 space-y-2 text-xs">
             <div className="flex justify-between text-[#14212b]/70">
               <span>Subtotal</span>
-              <span className="font-mono font-black">{money(subtotal)}</span>
+              <span className="font-mono font-black">{money(subtotal, settings.currency_symbol)}</span>
             </div>
 
             {appliedCoupon && isCouponEligible && discountAmount > 0 && (
@@ -2439,17 +2460,17 @@ function CheckoutView({
                 <span className="flex items-center gap-1">
                   <Tag className="size-3" /> Referral Discount ({appliedCoupon.discount_percent}%)
                 </span>
-                <span className="font-mono font-black">-{money(discountAmount)}</span>
+                <span className="font-mono font-black">-{money(discountAmount, settings.currency_symbol)}</span>
               </div>
             )}
 
             <div className="flex justify-between text-[#14212b]/70">
-              <span>VAT (7.5%)</span>
-              <span className="font-mono font-black">{money(tax)}</span>
+              <span>VAT ({settings.vat_percent}%)</span>
+              <span className="font-mono font-black">{money(tax, settings.currency_symbol)}</span>
             </div>
             <div className="flex justify-between text-base font-black border-t border-[#14212b]/15 pt-3">
-              <span>Total Due (NGN)</span>
-              <span className="font-mono text-lg text-[#9a4e2c]">{money(grandTotal)}</span>
+              <span>Total Due ({settings.currency_code})</span>
+              <span className="font-mono text-lg text-[#9a4e2c]">{money(grandTotal, settings.currency_symbol)}</span>
             </div>
           </div>
         </div>
@@ -2599,6 +2620,7 @@ function OrderConfirmationView({
 }
 
 function AccountView({
+  settings,
   user,
   mode,
   setMode,
@@ -2616,6 +2638,7 @@ function AccountView({
   onRefreshReferrals,
   onNotify,
 }: {
+  settings: SiteSettings;
   user: Partial<User> | null;
   mode: 'login' | 'register' | 'verify_notice';
   setMode: (m: 'login' | 'register' | 'verify_notice') => void;
@@ -2879,7 +2902,7 @@ function AccountView({
               <div className="mt-6 pt-6 border-t border-[#14212b]/15 text-xs text-[#14212b]/60 space-y-1.5">
                 <p><strong className="text-[#14212b]">Account ID:</strong> #{user.user_id}</p>
                 <p><strong className="text-[#14212b]">Membership:</strong> Active Trade Customer</p>
-                <p><strong className="text-[#14212b]">Currency:</strong> Nigerian Naira (₦)</p>
+                <p><strong className="text-[#14212b]">Currency:</strong> {settings.currency_code} ({settings.currency_symbol})</p>
               </div>
             </div>
           </div>
@@ -2899,7 +2922,7 @@ function AccountView({
             </div>
 
             <p className="mt-4 text-xs sm:text-sm text-[#f5f5f1]/80 leading-relaxed">
-              Share your personal referral code or link. When friends join ShopIt, you earn a <strong>5% OFF</strong> coupon!
+              Share your personal referral code or link. When friends join {settings.company_name}, you earn a <strong>5% OFF</strong> coupon!
               <span className="block mt-1 text-[11px] text-[#e0ee56]/90 font-medium">
                 * Note: All coupons require a minimum checkout of 3 products.
               </span>
@@ -3192,7 +3215,7 @@ function AccountView({
   return (
     <section className="mx-auto max-w-md px-4 sm:px-5 py-12 sm:py-20">
       <div className="text-center mb-8">
-        <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Welcome to ShopIt</p>
+        <p className="text-xs font-bold uppercase tracking-[.18em] text-[#9a4e2c]">Welcome to {settings.company_name}</p>
         <h1 className="mt-1 text-3xl sm:text-4xl font-black uppercase tracking-tight">
           {mode === 'verify_notice' ? 'Activate Account' : forgotMode !== 'none' ? 'Account Recovery' : 'Account Access'}
         </h1>
@@ -3260,7 +3283,7 @@ function AccountView({
               <p className="font-bold text-[#14212b]">
                 How it works:
               </p>
-              <p>1. Open the email in your inbox from <strong>ShopIt Commerce</strong>.</p>
+              <p>1. Open the email in your inbox from <strong>{settings.company_name} Commerce</strong>.</p>
               <p>2. Click the <strong>"Verify & Activate Account"</strong> button.</p>
               <p>3. You will be automatically authenticated and loggedin to your dashboard.</p>
             </div>
@@ -3708,7 +3731,7 @@ function AboutView({
           </h1>
 
           <p className="mt-6 max-w-2xl text-base sm:text-lg leading-relaxed text-white/75">
-            {settings.company_name} is Nigeria's direct-to-consumer and business-to-business commerce hub, established to eliminate opaque middlemen markups and deliver genuine quality products across the country at honest Nigerian Naira (₦) prices.
+            {settings.company_name} is Nigeria's direct-to-consumer and business-to-business commerce hub, established to eliminate opaque middlemen markups and deliver genuine quality products across the country at honest {settings.currency_code} ({settings.currency_symbol}) prices.
           </p>
 
           <div className="mt-10 flex flex-wrap gap-4">
@@ -3751,17 +3774,17 @@ function AboutView({
               <p className="mt-2 text-[11px] text-[#14212b]/60">Live fulfilled orders recorded in system database.</p>
             </div>
             <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-6 text-center sm:text-left">
-              <p className="text-3xl sm:text-4xl font-black text-[#14212b]">{stats ? stats.total_products : 37}</p>
+              <p className="text-3xl sm:text-4xl font-black text-[#14212b]">{stats ? stats.total_products : 0}</p>
               <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#14212b]">Verified Products</p>
               <p className="mt-2 text-[11px] text-[#14212b]/60">Active SKUs available for immediate dispatch.</p>
             </div>
             <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-6 text-center sm:text-left">
-              <p className="text-3xl sm:text-4xl font-black text-[#14212b]">{stats ? stats.total_categories : 10}</p>
+              <p className="text-3xl sm:text-4xl font-black text-[#14212b]">{stats ? stats.total_categories : 0}</p>
               <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#14212b]">Product Categories</p>
               <p className="mt-2 text-[11px] text-[#14212b]/60">From food staples and groceries to solar &amp; machinery.</p>
             </div>
             <div className="border border-[#14212b]/15 bg-[#e8e8e1] p-6 text-center sm:text-left">
-              <p className="text-3xl sm:text-4xl font-black text-[#9a4e2c]">{stats ? stats.total_subscribers : 6}</p>
+              <p className="text-3xl sm:text-4xl font-black text-[#9a4e2c]">{stats ? stats.total_subscribers : 0}</p>
               <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#14212b]">Trade Subscribers</p>
               <p className="mt-2 text-[11px] text-[#14212b]/60">Active buyers receiving trade alerts.</p>
             </div>
@@ -3831,8 +3854,9 @@ function AboutView({
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#e0ee56]">Corporate HQ</p>
               <h3 className="mt-1 text-xl font-black text-white uppercase">{settings.company_name}</h3>
               <p className="mt-3 text-xs text-white/70 leading-relaxed">
-                {settings.rc_number ? `Registered under ${settings.rc_number}.` : 'Registered corporate entity.'}<br />
-                {settings.office_address || 'Commercial Towers, Plot 14, Victoria Island, Lagos, Nigeria.'}
+                {settings.rc_number ? `Registered under ${settings.rc_number}.` : ''}
+                {settings.rc_number && settings.office_address ? <br /> : null}
+                {settings.office_address}
               </p>
             </div>
 
@@ -3841,7 +3865,7 @@ function AboutView({
               <h3 className="mt-1 text-xl font-black text-white uppercase">Monday – Saturday</h3>
               <p className="mt-3 text-xs text-white/70 leading-relaxed">
                 Order Processing: 8:00 AM – 6:00 PM WAT<br />
-                Customer Support: 24/7 via {settings.primary_email || 'support@shopit.co'}
+                {settings.primary_email ? `Customer Support: 24/7 via ${settings.primary_email}` : ''}
               </p>
             </div>
 
