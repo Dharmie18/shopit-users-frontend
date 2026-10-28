@@ -69,12 +69,12 @@ export function StorefrontHeader({
             >
               {settings.logo_url && settings.logo_url !== '/favicon.png' ? (
                 <img src={settings.logo_url} alt={settings.company_name} className="h-7 w-auto object-contain" />
-              ) : (
+              ) : settings.company_name ? (
                 <span className="grid size-7 place-items-center bg-[#14212b] text-sm text-[#e0ee56] font-black">
-                  {settings.company_name ? settings.company_name.charAt(0) : 'S'}
+                  {settings.company_name.charAt(0)}
                 </span>
-              )}
-              <span className="uppercase">{settings.company_name}</span>
+              ) : null}
+              {settings.company_name ? <span className="uppercase">{settings.company_name}</span> : null}
             </button>
 
             {/* Navigation links */}
@@ -106,7 +106,7 @@ export function StorefrontHeader({
                 }}
                 className={view === 'about' ? 'text-[#9a4e2c]' : 'hover:text-[#9a4e2c] cursor-pointer'}
               >
-                About {settings.company_name}
+                {settings.company_name ? `About ${settings.company_name}` : 'About'}
               </button>
             </nav>
           </div>
@@ -183,7 +183,7 @@ export function StorefrontHeader({
                 }}
                 className="text-left py-1 hover:text-[#9a4e2c]"
               >
-                About {settings.company_name}
+                {settings.company_name ? `About ${settings.company_name}` : 'About'}
               </button>
             </nav>
           </div>

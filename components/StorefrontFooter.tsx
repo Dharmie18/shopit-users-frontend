@@ -29,26 +29,30 @@ export function StorefrontFooter({
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-12">
           {/* Brand profile and corporate contacts */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="flex items-center gap-2.5 text-xl font-black tracking-tight">
-              {settings.logo_url && settings.logo_url !== '/favicon.png' ? (
-                <img src={settings.logo_url} alt={settings.company_name} className="h-7 w-auto object-contain" />
-              ) : (
-                <span className="grid size-7 place-items-center bg-[#e0ee56] text-sm text-[#14212b] font-black">
-                  {settings.company_name ? settings.company_name.charAt(0) : 'S'}
-                </span>
-              )}
-              <span className="uppercase">{settings.company_name} COMMERCE</span>
-            </div>
+            {settings.company_name && (
+              <div className="flex items-center gap-2.5 text-xl font-black tracking-tight">
+                {settings.logo_url ? (
+                  <img src={settings.logo_url} alt={settings.company_name} className="h-7 w-auto object-contain" />
+                ) : (
+                  <span className="grid size-7 place-items-center bg-[#e0ee56] text-sm text-[#14212b] font-black">
+                    {settings.company_name.charAt(0)}
+                  </span>
+                )}
+                <span className="uppercase">{settings.company_name} COMMERCE</span>
+              </div>
+            )}
 
-            <p className="text-xs text-white/60 leading-relaxed max-w-sm">
-              {settings.tagline}
-            </p>
+            {settings.tagline && (
+              <p className="text-xs text-white/60 leading-relaxed max-w-sm">
+                {settings.tagline}
+              </p>
+            )}
 
             <div className="pt-2 text-xs text-white/40 space-y-1 font-mono">
-              <p>RC Number: {settings.rc_number}</p>
-              <p>Location: {settings.office_address}</p>
-              <p>Support: {settings.primary_email}</p>
-              <p>Hotline: {settings.support_phone}</p>
+              {settings.rc_number && <p>RC Number: {settings.rc_number}</p>}
+              {settings.office_address && <p>Location: {settings.office_address}</p>}
+              {settings.primary_email && <p>Support: {settings.primary_email}</p>}
+              {settings.support_phone && <p>Hotline: {settings.support_phone}</p>}
             </div>
 
             {/* Dynamic social links */}
@@ -125,7 +129,7 @@ export function StorefrontFooter({
                   }}
                   className="hover:text-[#e0ee56] cursor-pointer"
                 >
-                  About {settings.company_name}
+                  {settings.company_name ? `About ${settings.company_name}` : 'About Us'}
                 </button>
               </li>
               <li><span className="text-white/40">Delivery &amp; Returns</span></li>
@@ -176,11 +180,15 @@ export function StorefrontFooter({
       <div className="border-t border-white/10 bg-[#0d161d] px-4 sm:px-6 py-5 text-xs text-white/50">
         <div className="mx-auto flex max-w-[1440px] flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4 text-center sm:text-left">
-            <span>© {new Date().getFullYear()} {settings.company_name} Commerce Ltd. All rights reserved.</span>
-            <span className="hidden sm:inline">·</span>
-            <span className="inline-flex items-center gap-1.5 bg-[#14212b] border border-white/10 px-2 py-0.5 text-[10px] font-bold text-[#e0ee56]">
-              Currency: {settings.currency_code} ({settings.currency_symbol})
-            </span>
+            <span>© {new Date().getFullYear()} {settings.company_name ? `${settings.company_name} Commerce Ltd.` : 'Commerce Ltd.'} All rights reserved.</span>
+            {settings.currency_code && (
+              <>
+                <span className="hidden sm:inline">·</span>
+                <span className="inline-flex items-center gap-1.5 bg-[#14212b] border border-white/10 px-2 py-0.5 text-[10px] font-bold text-[#e0ee56]">
+                  Currency: {settings.currency_code} ({settings.currency_symbol})
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2 text-white/60 text-[11px]">
